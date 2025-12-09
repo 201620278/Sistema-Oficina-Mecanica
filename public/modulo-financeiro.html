@@ -1581,12 +1581,13 @@
                     return Promise.resolve([]);
                 }
                 
-                // Filtrar orçamentos aprovados do cliente
+                // Filtrar orçamentos aprovados e finalizados do cliente
                 // Verificar tanto clienteId quanto cliente_id (formato do servidor)
-                const orcamentosAprovados = orcamentos.filter(orcamento => {
+                const orcamentosAprovadosEFinalizados = orcamentos.filter(orcamento => {
                     const orcClienteId = this.normalizarId(orcamento.clienteId);
                     const orcClienteIdAlt = this.normalizarId(orcamento.cliente_id);
-                    const statusOk = orcamento.status === 'aprovado';
+                    // Aceitar orçamentos aprovados OU finalizados
+                    const statusOk = orcamento.status === 'aprovado' || orcamento.status === 'finalizado';
                     const clienteOk = this.idsIguais(orcClienteId, clienteIdNormalizado) || 
                                      this.idsIguais(orcClienteIdAlt, clienteIdNormalizado);
                     
@@ -1603,57 +1604,16 @@
                     return clienteOk && statusOk;
                 });
                 
-                console.log('✅ Orçamentos aprovados encontrados:', orcamentosAprovados.length);
+                console.log('✅ Orçamentos aprovados e finalizados encontrados:', orcamentosAprovadosEFinalizados.length);
                 
-                if (orcamentosAprovados.length === 0) {
-                    console.warn('⚠️ Nenhum orçamento aprovado encontrado para este cliente');
+                if (orcamentosAprovadosEFinalizados.length === 0) {
+                    console.warn('⚠️ Nenhum orçamento aprovado ou finalizado encontrado para este cliente');
                     return Promise.resolve([]);
                 }
                 
-                // Verificar quais têm OS finalizada
-                const orcamentosComOSFinalizada = orcamentosAprovados.filter(orcamento => {
-                    const orcIdNormalizado = this.normalizarId(orcamento.id);
-                    
-                    // Buscar todas as OS vinculadas a este orçamento
-                    const osVinculadas = ordensServico.filter(os => {
-                        const osOrcId = this.normalizarId(os.orcamentoId);
-                        const osOrcIdAlt = this.normalizarId(os.orcamento_id);
-                        return this.idsIguais(osOrcId, orcIdNormalizado) || 
-                               this.idsIguais(osOrcIdAlt, orcIdNormalizado);
-                    });
-                    
-                    console.log(`OS vinculadas ao orçamento ${orcamento.id}:`, osVinculadas.map(os => ({
-                        id: os.id,
-                        numero: os.numero,
-                        status: os.status
-                    })));
-                    
-                    // Verificar se alguma está finalizada
-                    const osFinalizada = osVinculadas.find(os => os.status === 'finalizada');
-                    
-                    if (osFinalizada) {
-                        console.log('✅ OS finalizada encontrada para orçamento:', {
-                            orcamentoId: orcamento.id,
-                            orcamentoNumero: orcamento.numero,
-                            osId: osFinalizada.id,
-                            osNumero: osFinalizada.numero,
-                            osStatus: osFinalizada.status
-                        });
-                    } else {
-                        console.log('❌ Nenhuma OS finalizada encontrada para orçamento:', {
-                            orcamentoId: orcamento.id,
-                            orcamentoNumero: orcamento.numero,
-                            osVinculadas: osVinculadas.length
-                        });
-                    }
-                    
-                    return osFinalizada != null;
-                });
-                
-                console.log('✅✅ Orçamentos com OS finalizada:', orcamentosComOSFinalizada.length);
                 console.log('=== FIM DA BUSCA ===');
                 
-                return Promise.resolve(orcamentosComOSFinalizada);
+                return Promise.resolve(orcamentosAprovadosEFinalizados);
             }
 
             async getOrcamentoCompleto(orcamentoId) {
@@ -2218,17 +2178,18 @@ Obrigado!`;
                 } else {
                     console.warn('⚠️ Nenhum orçamento encontrado, verificando detalhes...');
                     
-                    // Verificar se há orçamentos aprovados sem OS finalizada
+                    // Verificar se há orçamentos aprovados ou finalizados
                     const todosOrcamentos = this.db.getAllSync('orcamentos');
                     const clienteIdNormalizado = clienteId != null ? String(clienteId) : null;
                     
                     console.log('Total de orçamentos no sistema:', todosOrcamentos.length);
                     
-                    const orcamentosAprovados = todosOrcamentos.filter(orcamento => {
+                    const orcamentosAprovadosEFinalizados = todosOrcamentos.filter(orcamento => {
                         const orcClienteId = orcamento.clienteId != null ? String(orcamento.clienteId) : null;
                         const orcClienteIdAlt = orcamento.cliente_id != null ? String(orcamento.cliente_id) : null;
                         const clienteOk = orcClienteId === clienteIdNormalizado || orcClienteIdAlt === clienteIdNormalizado;
-                        const statusOk = orcamento.status === 'aprovado';
+                        // Aceitar orçamentos aprovados OU finalizados
+                        const statusOk = orcamento.status === 'aprovado' || orcamento.status === 'finalizado';
                         
                         if (clienteOk) {
                             console.log('Orçamento do cliente encontrado:', {
@@ -2242,61 +2203,12 @@ Obrigado!`;
                         return clienteOk && statusOk;
                     });
                     
-                    console.log('Orçamentos aprovados do cliente:', orcamentosAprovados.length);
+                    console.log('Orçamentos aprovados e finalizados do cliente:', orcamentosAprovadosEFinalizados.length);
                     
-                    if (orcamentosAprovados.length > 0) {
-                        // Verificar OS
-                        const ordensServico = this.db.getAllSync('ordensServico');
-                        console.log('Total de OS no sistema:', ordensServico.length);
-                        
-                        const orcamentosComOS = orcamentosAprovados.filter(orcamento => {
-                            const orcIdNormalizado = this.db.normalizarId(orcamento.id);
-                            const temOS = ordensServico.some(os => {
-                                const osOrcId = this.db.normalizarId(os.orcamentoId);
-                                const osOrcIdAlt = this.db.normalizarId(os.orcamento_id);
-                                return (osOrcId === orcIdNormalizado || osOrcIdAlt === orcIdNormalizado);
-                            });
-                            
-                            if (!temOS) {
-                                console.log('Orçamento sem OS:', orcamento.id);
-                            }
-                            
-                            return temOS;
-                        });
-                        
-                        const orcamentosComOSFinalizada = orcamentosComOS.filter(orcamento => {
-                            const orcIdNormalizado = this.db.normalizarId(orcamento.id);
-                            const osFinalizada = ordensServico.find(os => {
-                                const osOrcId = this.db.normalizarId(os.orcamentoId);
-                                const osOrcIdAlt = this.db.normalizarId(os.orcamento_id);
-                                const osVinculada = (osOrcId === orcIdNormalizado || osOrcIdAlt === orcIdNormalizado);
-                                return osVinculada && os.status === 'finalizada';
-                            });
-                            
-                            if (!osFinalizada) {
-                                console.log('Orçamento sem OS finalizada:', {
-                                    orcamentoId: orcamento.id,
-                                    osStatus: ordensServico.find(os => {
-                                        const osOrcId = this.db.normalizarId(os.orcamentoId);
-                                        const osOrcIdAlt = this.db.normalizarId(os.orcamento_id);
-                                        const orcIdNormalizado = this.db.normalizarId(orcamento.id);
-                                        return (osOrcId === orcIdNormalizado || osOrcIdAlt === orcIdNormalizado);
-                                    })?.status
-                                });
-                            }
-                            
-                            return osFinalizada != null;
-                        });
-                        
-                        if (orcamentosComOS.length === 0) {
-                            select.innerHTML = '<option value="">Nenhum orçamento com OS vinculada. Crie uma OS primeiro.</option>';
-                        } else if (orcamentosComOSFinalizada.length === 0) {
-                            select.innerHTML = '<option value="">Nenhum orçamento com OS finalizada. Finalize a OS primeiro.</option>';
-                        } else {
-                            select.innerHTML = '<option value="">Erro ao carregar orçamentos. Verifique o console.</option>';
-                        }
+                    if (orcamentosAprovadosEFinalizados.length === 0) {
+                        select.innerHTML = '<option value="">Nenhum orçamento aprovado ou finalizado encontrado para este cliente</option>';
                     } else {
-                        select.innerHTML = '<option value="">Nenhum orçamento aprovado encontrado para este cliente</option>';
+                        select.innerHTML = '<option value="">Erro ao carregar orçamentos. Verifique o console.</option>';
                     }
                 }
                 
