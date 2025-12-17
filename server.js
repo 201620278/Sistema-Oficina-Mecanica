@@ -67,6 +67,22 @@ app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 app.use(express.static('public'));
 
+// Content Security Policy: permitir apenas origens necessárias (ajuste conforme ambiente)
+app.use((req, res, next) => {
+    // Em produção, restrinja essas origens ao mínimo necessário.
+    // Development-friendly CSP: permite conexões locais (localhost / 127.0.0.1)
+    // Em produção, restrinja essas origens ao mínimo necessário.
+    const csp = "default-src 'self'; " +
+                "script-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net https://cdn.jsdelivr.net/npm; " +
+                "style-src 'self' 'unsafe-inline' https://unpkg.com https://cdn.jsdelivr.net https://fonts.googleapis.com; " +
+                "connect-src 'self' http://localhost:3000 http://127.0.0.1:3000 ws://localhost:3000 ws://127.0.0.1:3000; " +
+                "img-src 'self' data: https:; " +
+                "font-src 'self' https://fonts.gstatic.com; " +
+                "frame-ancestors 'self';";
+    res.setHeader('Content-Security-Policy', csp);
+    next();
+});
+
 // Configuração do banco de dados SQLite local
 const dbPath = path.join(__dirname, 'database.db');
 const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {

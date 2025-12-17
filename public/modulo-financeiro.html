@@ -1449,11 +1449,35 @@
                             
                             console.log(`Recebimentos do servidor: ${receber.length}, Pagamentos: ${pagar.length}`);
                             
-                            // Sobrescrever com dados do servidor (fonte de verdade)
-                            localStorage.setItem(this.storageKeys.receber, JSON.stringify(receber));
-                            localStorage.setItem(this.storageKeys.pagar, JSON.stringify(pagar));
-                            
-                            console.log('Dados sincronizados com sucesso no localStorage');
+                            // Mesclar com dados locais existentes para não perder lançamentos não sincronizados
+                            try {
+                                const locaisReceber = this.getAllSync('receber');
+                                const locaisPagar = this.getAllSync('pagar');
+
+                                // Map de IDs do servidor para fácil verificação
+                                const idsReceberServer = new Set(receber.map(r => String(r.id)));
+                                const idsPagarServer = new Set(pagar.map(p => String(p.id)));
+
+                                // Incluir itens locais que não existem no servidor
+                                locaisReceber.forEach(item => {
+                                    if (!idsReceberServer.has(String(item.id))) {
+                                        receber.push(item);
+                                    }
+                                });
+                                locaisPagar.forEach(item => {
+                                    if (!idsPagarServer.has(String(item.id))) {
+                                        pagar.push(item);
+                                    }
+                                });
+
+                                localStorage.setItem(this.storageKeys.receber, JSON.stringify(receber));
+                                localStorage.setItem(this.storageKeys.pagar, JSON.stringify(pagar));
+                                console.log('Dados sincronizados (mesclados) com sucesso no localStorage');
+                            } catch (mergeErr) {
+                                console.warn('Erro ao mesclar dados locais com servidor, sobrescrevendo localStorage:', mergeErr);
+                                localStorage.setItem(this.storageKeys.receber, JSON.stringify(receber));
+                                localStorage.setItem(this.storageKeys.pagar, JSON.stringify(pagar));
+                            }
                         } else {
                             console.warn('Erro ao sincronizar dados do servidor:', response.status, response.statusText);
                         }
