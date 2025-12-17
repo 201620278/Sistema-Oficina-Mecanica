@@ -1,6 +1,67 @@
 {
   "receber": [
     {
+      "id": "17659369758683ayw7eysk",
+      "clienteId": 7,
+      "cliente": "Donizete Ferreira Machado",
+      "orcamentoId": 12,
+      "descricao": "Orçamento 3 - Parcela 1/2",
+      "valor": 50,
+      "vencimento": "2026-01-16",
+      "status": "aberto",
+      "data": "2025-12-17",
+      "parcela": "1/2",
+      "tipo": "receber",
+      "observacoes": "",
+      "createdAt": "2025-12-17T02:02:55.951Z"
+    },
+    {
+      "id": "1765936975617qb8javlv0",
+      "clienteId": 7,
+      "cliente": "Donizete Ferreira Machado",
+      "orcamentoId": 12,
+      "descricao": "Orçamento 3 - Entrada",
+      "valor": 40,
+      "vencimento": "2025-12-17",
+      "status": "pago",
+      "data": "2025-12-17",
+      "dataPagamento": "2025-12-17",
+      "parcela": "Entrada",
+      "tipo": "receber",
+      "observacoes": "",
+      "createdAt": "2025-12-17T02:02:55.835Z"
+    },
+    {
+      "id": "1765933805741vawhm926j",
+      "clienteId": 3,
+      "cliente": "Paloma Gonçalves Mendonça",
+      "orcamentoId": 13,
+      "descricao": "Orçamento 4 - Parcela 1/2",
+      "valor": 120,
+      "vencimento": "2026-01-16",
+      "status": "aberto",
+      "data": "2025-12-17",
+      "parcela": "1/2",
+      "tipo": "receber",
+      "observacoes": "",
+      "createdAt": "2025-12-17T01:10:05.805Z"
+    },
+    {
+      "id": "1765932852373bil3exuaq",
+      "clienteId": 7,
+      "cliente": "Donizete Ferreira Machado",
+      "orcamentoId": 11,
+      "descricao": "Orçamento 2 - Parcela 1/2",
+      "valor": 110,
+      "vencimento": "2026-01-16",
+      "status": "aberto",
+      "data": "2025-12-17",
+      "parcela": "1/2",
+      "tipo": "receber",
+      "observacoes": "",
+      "createdAt": "2025-12-17T00:54:12.462Z"
+    },
+    {
       "id": "1765918435224lve9ee6g2",
       "clienteId": 6,
       "cliente": "Cicero Diego",
@@ -424,5 +485,5 @@
       "createdAt": "2025-12-10T11:57:47.838Z"
     }
   ],
-  "lastId": 1765904617785617
+  "lastId": 1765904617785621
 }
