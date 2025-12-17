@@ -1511,7 +1511,7 @@
 
                 // helpers locais
                 const formatarData = (d) => this.formatarData(d);
-                const renderizarStatus = (s) => this.criarBadgeStatus(s);
+                const renderizarStatus = (it) => this.criarBadgeStatus(it);
                 const renderizarAcoes = (it) => `
                         <button class="btn btn-success btn-sm" onclick="ui.marcarComoPago('${it.id}')">
                             <i class="fas fa-check"></i>
@@ -1554,7 +1554,7 @@
                             <td>${item.parcela || '1/1'}</td>
                             <td>R$ ${item.valor.toFixed(2)}</td>
                             <td>${this.formatarData(item.vencimento)}</td>
-                            <td>${this.criarBadgeStatus(item.status)}</td>
+                            <td>${this.criarBadgeStatus(item)}</td>
                             <td>
                                 <button class="btn btn-success btn-sm" onclick="ui.marcarComoPagoPagar('${item.id}')">
                                     <i class="fas fa-check"></i>
@@ -1567,12 +1567,45 @@
                 tabela.innerHTML = html || '<tr><td colspan="7" class="text-center">Nenhuma conta a pagar</td></tr>';
             }
 
-            criarBadgeStatus(status) {
+            criarBadgeStatus(statusOrItem) {
+                // Aceita tanto uma string de status quanto o próprio objeto 'item'
+                let status = '';
+                let item = null;
+                if (statusOrItem && typeof statusOrItem === 'object') {
+                    item = statusOrItem;
+                    status = (item.status || item.situacao || item.estado || '') + '';
+                } else {
+                    status = (statusOrItem || '') + '';
+                }
+
+                status = status.toLowerCase();
+
+                // Detectar se o item é parcelado (quando for passado o objeto)
+                const isParcelado = (() => {
+                    if (!item) return false;
+                    if (item.parcelado === true || item.parcelado === 'true' || item.parcelado === 1 || item.parcelado === '1') return true;
+                    const tipo = (item.tipo || item.forma || '').toString().toLowerCase();
+                    if (tipo === 'parcelado') return true;
+                    const parcela = (item.parcela || item.parcela_de || item.numero_parcela || '');
+                    const pstr = parcela.toString();
+                    if (pstr && pstr.indexOf('/') !== -1) {
+                        const parts = pstr.split('/').map(s => s.trim());
+                        if (parts.length === 2 && parts[0] !== parts[1]) return true;
+                    }
+                    if ((Number(item.numParcelas) || Number(item.total_parcelas) || Number(item.totalParcelas) || 0) > 1) return true;
+                    return false;
+                })();
+
+                // Se for parcelado e status aberto/pendente, mostrar 'Aberto/Parcelado'
+                if (isParcelado && (status === 'aberto' || status === 'pendente' || status === '')) {
+                    return '<span class="badge badge-warning">Aberto/Parcelado</span>';
+                }
+
                 switch(status) {
                     case 'aberto': return '<span class="badge badge-warning">Aberto</span>';
                     case 'pago': return '<span class="badge badge-success">Pago</span>';
                     case 'atrasado': return '<span class="badge badge-danger">Atrasado</span>';
-                    default: return '<span class="badge">' + status + '</span>';
+                    default: return '<span class="badge">' + (status || (item && (item.parcelado ? 'Parcelado' : '')) ) + '</span>';
                 }
             }
 
@@ -3058,7 +3091,7 @@
                     const valor = item.valor ? parseFloat(item.valor) : 0;
                     total += valor;
                     const venc = item.vencimento ? new Date(item.vencimento).toLocaleDateString('pt-BR') : '-';
-                    const statusBadge = ui.criarBadgeStatus(item.status);
+                    const statusBadge = ui.criarBadgeStatus(item);
 
                     html += `
                         <tr>
