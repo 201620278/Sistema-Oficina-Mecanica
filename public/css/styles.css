@@ -148,24 +148,13 @@ input, select, textarea { width: 100%; padding: 12px; border: 2px solid #e0e0e0;
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--secondary-color); }
 
 /* Estilo de botões restaurado para comportamento mais sóbrio */
-.btn {
-	padding: 10px 16px;
-	border: 1px solid rgba(0,0,0,0.06);
-	border-radius: 6px;
-	cursor: pointer;
-	font-size: 14px;
-	font-weight: 600;
-	background: #fff;
-	color: var(--primary-color);
-	transition: box-shadow .15s ease, transform .06s ease;
-}
-.btn:hover { box-shadow: 0 8px 24px rgba(16,24,40,0.06); transform: translateY(-1px); }
-.btn-primary { background: var(--secondary-color); color: white; border-color: transparent; }
-.btn-primary:hover { background: #2980b9; }
-.btn-success { background: var(--success-color); color: white; border-color: transparent; }
-.btn-danger { background: var(--danger-color); color: white; border-color: transparent; }
-.btn-warning { background: var(--warning-color); color: white; border-color: transparent; }
-.btn-sm { padding: 8px 12px; font-size: 13px; }
+.btn { padding: 12px 25px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.3s ease; }
+.btn-primary { background: var(--secondary-color); color: white; }
+.btn-primary:hover { background: #2980b9; transform: translateY(-2px); }
+.btn-success { background: var(--success-color); color: white; }
+.btn-danger { background: var(--danger-color); color: white; }
+.btn-warning { background: var(--warning-color); color: white; }
+.btn-sm { padding: 8px 15px; font-size: 12px; }
 
 /* Status Badges */
 .badge { padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: 600; }
