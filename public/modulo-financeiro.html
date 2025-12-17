@@ -1307,6 +1307,28 @@
                 this.carregarReceber();
             }
 
+            // Tentativa de migrar clientes do localStorage (index.html) para o storage usado por este módulo
+            async migrarClientesFinanceiro() {
+                try {
+                    // Se já houver clientes no storage do módulo, não migrar
+                    const existentes = this.db.getAllSync('clientes');
+                    if (existentes && existentes.length > 0) return;
+
+                    const fromLS = localStorage.getItem('clientes');
+                    if (!fromLS) return;
+
+                    const clientes = JSON.parse(fromLS || '[]');
+                    for (const c of clientes) {
+                        const cliente = Object.assign({}, c, { id: String(c.id || Date.now()) });
+                        try { await this.db.add('clientes', cliente); } catch (e) { console.warn('migração cliente erro', e); }
+                    }
+
+                    console.log('Migração de clientes para módulo financeiro (localStorage) concluída');
+                } catch (err) {
+                    console.warn('Erro em migrarClientesFinanceiro:', err);
+                }
+            }
+
             // Dados vêm do index.html via localStorage, não precisa criar exemplos
 
             async carregarDadosDashboard() {

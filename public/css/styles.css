@@ -147,13 +147,25 @@ label { display: block; margin-bottom: 5px; font-weight: 600; color: var(--dark-
 input, select, textarea { width: 100%; padding: 12px; border: 2px solid #e0e0e0; border-radius: 5px; font-size: 14px; transition: border-color 0.3s ease; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--secondary-color); }
 
-.btn { padding: 12px 25px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.3s ease; }
-.btn-primary { background: var(--secondary-color); color: white; }
-.btn-primary:hover { background: #2980b9; transform: translateY(-2px); }
-.btn-success { background: var(--success-color); color: white; }
-.btn-danger { background: var(--danger-color); color: white; }
-.btn-warning { background: var(--warning-color); color: white; }
-.btn-sm { padding: 8px 15px; font-size: 12px; }
+/* Estilo de botões restaurado para comportamento mais sóbrio */
+.btn {
+	padding: 10px 16px;
+	border: 1px solid rgba(0,0,0,0.06);
+	border-radius: 6px;
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 600;
+	background: #fff;
+	color: var(--primary-color);
+	transition: box-shadow .15s ease, transform .06s ease;
+}
+.btn:hover { box-shadow: 0 8px 24px rgba(16,24,40,0.06); transform: translateY(-1px); }
+.btn-primary { background: var(--secondary-color); color: white; border-color: transparent; }
+.btn-primary:hover { background: #2980b9; }
+.btn-success { background: var(--success-color); color: white; border-color: transparent; }
+.btn-danger { background: var(--danger-color); color: white; border-color: transparent; }
+.btn-warning { background: var(--warning-color); color: white; border-color: transparent; }
+.btn-sm { padding: 8px 12px; font-size: 13px; }
 
 /* Status Badges */
 .badge { padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: 600; }
@@ -283,13 +295,24 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--s
 .vencimento-valor, .recent-valor { font-weight: 600; }
 
 /* Buttons */
-.btn { padding: 12px 25px; border: none; border-radius: 5px; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.3s ease; }
-.btn-primary { background: var(--secondary-color); color: white; }
-.btn-primary:hover { background: #2980b9; transform: translateY(-2px); }
-.btn-success { background: var(--success-color); color: white; }
-.btn-danger { background: var(--danger-color); color: white; }
-.btn-warning { background: var(--warning-color); color: white; }
-.btn-sm { padding: 8px 15px; font-size: 12px; }
+.btn {
+	padding: 10px 16px;
+	border: 1px solid rgba(0,0,0,0.06);
+	border-radius: 6px;
+	cursor: pointer;
+	font-size: 14px;
+	font-weight: 600;
+	background: #fff;
+	color: var(--primary-color);
+	transition: box-shadow .15s ease, transform .06s ease;
+}
+.btn:hover { box-shadow: 0 8px 24px rgba(16,24,40,0.06); transform: translateY(-1px); }
+.btn-primary { background: var(--secondary-color); color: white; border-color: transparent; }
+.btn-primary:hover { background: #2980b9; }
+.btn-success { background: var(--success-color); color: white; border-color: transparent; }
+.btn-danger { background: var(--danger-color); color: white; border-color: transparent; }
+.btn-warning { background: var(--warning-color); color: white; border-color: transparent; }
+.btn-sm { padding: 8px 12px; font-size: 13px; }
 
 /* Modal */
 .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center; }
