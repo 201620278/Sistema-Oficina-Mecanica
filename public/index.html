@@ -645,6 +645,9 @@
                 <button type="button" class="btn btn-primary" onclick="sistema.fazerLogin()" style="width: 100%; margin-top: 20px;">
                     Entrar
                 </button>
+                <button type="button" class="btn btn-warning" onclick="abrirModalAdminLogin()" style="width: 100%; margin-top: 10px;">
+                    🔐 Login Admin
+                </button>
             </div>
             <div id="cadastro-form" style="display: none;">
                 <h3>Primeiro Acesso - Cadastro</h3>
@@ -685,13 +688,125 @@
         </div>
     </div>
 
+    <!-- Modal de Login Admin -->
+    <div id="modal-admin-login" class="modal">
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <div class="modal-title">🔐 Login do Administrador</div>
+                <div class="modal-actions">
+                    <button class="close" onclick="fecharModalAdminLogin()">✕</button>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Usuário *</label>
+                <input type="text" id="admin-username" placeholder="Digite seu usuário" required>
+            </div>
+            <div class="form-group">
+                <label>Senha *</label>
+                <input type="password" id="admin-password" placeholder="Digite sua senha" required>
+            </div>
+            <button type="button" class="btn btn-primary" onclick="fazerLoginAdmin()" style="width: 100%; margin-top: 20px;">
+                Entrar como Admin
+            </button>
+            <button type="button" class="btn btn-danger" onclick="fecharModalAdminLogin()" style="width: 100%; margin-top: 10px;">
+                Cancelar
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal Limpeza de Registros (Multi-módulo) -->
+    <div id="modal-limpeza-financeiro" class="modal">
+        <div class="modal-content" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <div class="modal-title">🗑️ Limpeza de Registros</div>
+                <div class="modal-actions">
+                    <button class="close" onclick="fecharModalLimpezaFinanceiro()">✕</button>
+                </div>
+            </div>
+            <div style="padding: 20px;">
+                <!-- Seleção de Módulo -->
+                <div class="form-group">
+                    <label><strong>Selecione o módulo:</strong></label>
+                    <select id="cleanup-module" onchange="atualizarListaRegistrosLimpeza()">
+                        <option value="">-- Escolha um módulo --</option>
+                        <option value="clientes">👥 Clientes</option>
+                        <option value="agendamentos">📋 Agendamentos</option>
+                        <option value="orcamentos">📅 Orçamentos</option>
+                        <option value="ordens_servico">🔧 Ordens de Serviço</option>
+                        <option value="transacoes">💰 Transações (Financeiro)</option>
+                    </select>
+                </div>
+
+                <!-- Filtros de Data -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px;">
+                    <div class="form-group">
+                        <label>Data de (de):</label>
+                        <input type="date" id="cleanup-from-date">
+                    </div>
+                    <div class="form-group">
+                        <label>Data até:</label>
+                        <input type="date" id="cleanup-to-date">
+                    </div>
+                </div>
+
+                <button class="btn btn-primary" onclick="atualizarListaRegistrosLimpeza()" style="width: 100%; margin-bottom: 15px;">
+                    🔍 Carregar Registros
+                </button>
+
+                <!-- Lista de Registros -->
+                <div id="cleanup-records-container" style="display: none;">
+                    <h4>Registros encontrados:</h4>
+                    <p id="cleanup-records-count" style="color: #666; margin-bottom: 10px;"></p>
+                    
+                    <!-- Modo Seleção em Lote -->
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: flex; align-items: center; gap: 8px;">
+                            <input type="checkbox" id="cleanup-select-all" onchange="selecionarTodosRegistrosLimpeza()">
+                            <strong>Selecionar todos</strong>
+                        </label>
+                    </div>
+
+                    <div id="cleanup-records-list" style="max-height: 300px; overflow-y: auto; border: 1px solid #ddd; border-radius: 5px; padding: 10px; background: #f9f9f9;">
+                        <!-- Registros aparecerão aqui -->
+                    </div>
+
+                    <div style="margin-top: 15px; padding: 15px; background: #fff3cd; border-radius: 5px; border-left: 4px solid #ffc107;">
+                        <p style="margin: 0;"><strong>⚠️ Atenção:</strong></p>
+                        <p style="margin: 5px 0 0 0; font-size: 14px;">Digite <strong>DELETE</strong> abaixo para confirmar a exclusão dos registros selecionados.</p>
+                    </div>
+
+                    <div class="form-group" style="margin-top: 15px;">
+                        <label>Confirmação de exclusão:</label>
+                        <input type="text" id="cleanup-confirm-admin" placeholder="Digite DELETE" 
+                               onkeyup="if(event.key === 'Enter' && this.value === 'DELETE') executarLimpezaFinanceiro()">
+                    </div>
+                </div>
+
+                <!-- Mensagem quando nenhum módulo é selecionado -->
+                <div id="cleanup-no-selection" style="padding: 20px; text-align: center; color: #999;">
+                    <p>Selecione um módulo acima para começar</p>
+                </div>
+            </div>
+
+            <div style="padding: 20px; display: flex; gap: 10px; justify-content: flex-end; border-top: 1px solid #eee;">
+                <button class="btn btn-secondary" onclick="fecharModalLimpezaFinanceiro()">Cancelar</button>
+                <button class="btn btn-danger" id="cleanup-delete-btn" onclick="executarLimpezaFinanceiro()" style="display: none;">
+                    🗑️ Excluir Registros Selecionados
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Main App Container -->
     <div id="app-container" class="app-container hidden">
         <!-- Sidebar -->
         <div class="sidebar">
             <div class="logo">
                 <img id="sidebar-logo" src="" alt="Logo" style="display: none;">
-                <span>NegoCar</span>
+                <div style="display: flex; flex-direction: column;">
+                    <span>NegoCar</span>
+                    <span id="admin-mode-badge" style="display: none; font-size: 11px; color: #ffeb3b; background: #ff6f00; padding: 3px 8px; border-radius: 3px; margin-top: 5px; text-align: center; font-weight: bold;">🔐 Modo Administrador</span>
+                </div>
             </div>
             <ul class="nav-menu">
                 <li class="nav-item active" data-section="dashboard">
@@ -717,6 +832,9 @@
                 </li>
                 <li class="nav-item" data-section="configuracoes">
                     <i>⚙️</i> Configurações
+                </li>
+                <li class="nav-item" id="btn-logout-admin" style="display: none; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 20px; padding-top: 15px;" onclick="fazerLogoutAdmin()">
+                    <i>🚪</i> Sair do Modo Admin
                 </li>
             </ul>
         </div>
@@ -936,6 +1054,7 @@
                     <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
                         <label><strong>Filtros:</strong></label>
                         <button class="btn btn-sm" id="filtro-orcamento-pendentes" onclick="sistema.aplicarFiltroOrcamento('pendentes')">Pendentes</button>
+                        <button class="btn btn-sm btn-admin" onclick="showModal('modal-admin-login')">Login Admin</button>
                         <button class="btn btn-sm" id="filtro-orcamento-aprovados" onclick="sistema.aplicarFiltroOrcamento('aprovados')">Aprovados</button>
                         <button class="btn btn-sm" id="filtro-orcamento-finalizados" onclick="sistema.aplicarFiltroOrcamento('finalizados')">Finalizados</button>
                         <button class="btn btn-sm" id="filtro-orcamento-todos" onclick="sistema.aplicarFiltroOrcamento('todos')" style="background: var(--primary-color); color: white;">Todos</button>
@@ -1137,6 +1256,17 @@
                 <button class="btn btn-success" onclick="sistema.salvarConfiguracoes()">
                     Salvar Configurações
                 </button>
+
+                <hr style="margin: 30px 0;">
+
+                <h4 style="color: var(--danger-color); margin-bottom: 15px;">⚠️ Manutenção e Limpeza</h4>
+                <p style="margin-bottom: 15px; color: #666;">Ferramentas administrativas para manutenção do sistema.</p>
+                
+                <div class="form-group">
+                    <button class="btn btn-danger" onclick="abrirModalLimpezaFinanceiro()">
+                        🗑️ Limpar Registros Antigos
+                    </button>
+                </div>
 
                 <div class="console" id="system-console">
                     <div class="log-entry">
@@ -1767,6 +1897,35 @@
         })();
 
         window.storageReady = storageSync.ready;
+
+        // Helper para abrir WhatsApp: tenta esquema nativo e cai back para web.whatsapp.com
+        function openWhatsAppFallback(telefone, mensagem) {
+            const tel = String(telefone || '').replace(/\D/g, '');
+            if (!tel) {
+                alert('Telefone inválido para WhatsApp');
+                return;
+            }
+            const msgEncoded = encodeURIComponent(mensagem || '');
+
+            // Tentar abrir app nativo via esquema
+            try {
+                const appLink = `whatsapp://send?phone=55${tel}&text=${msgEncoded}`;
+                const a = document.createElement('a');
+                a.href = appLink;
+                a.style.display = 'none';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            } catch (e) {
+                // ignore
+            }
+
+            // Fallback para web.whatsapp.com com texto pré-preenchido
+            setTimeout(() => {
+                const web = `https://web.whatsapp.com/send?phone=55${tel}&text=${msgEncoded}`;
+                window.open(web, '_blank');
+            }, 1100);
+        }
 
         // Sistema de gerenciamento de estado
         const state = {
@@ -3449,9 +3608,8 @@
                 const whatsappLimpo = cliente.whatsapp.replace(/\D/g, '');
                 const mensagemEncoded = encodeURIComponent(mensagem);
                 
-                // Abrir WhatsApp Desktop instalado no PC
-                const url = `whatsapp://send?phone=55${whatsappLimpo}&text=${mensagemEncoded}`;
-                window.location.href = url;
+                // Tentar abrir app nativo com fallback para web
+                openWhatsAppFallback(whatsappLimpo, mensagem);
             }
 
             async excluirOrcamento(id) {
@@ -5524,10 +5682,7 @@ Aguardamos você na data e hora agendadas!
 Obrigado pela confiança! 🙏`;
 
                 const numero = cliente.whatsapp.replace(/\D/g, '');
-                const mensagemEncoded = encodeURIComponent(mensagem);
-                const url = `whatsapp://send?phone=55${numero}&text=${mensagemEncoded}`;
-                
-                window.location.href = url;
+                openWhatsAppFallback(numero, mensagem);
                 
                 try {
                     await this.atualizarAgendamentoServidor(agendamento.id, { whatsappEnviado: true });
@@ -5585,10 +5740,7 @@ Aguardamos você! 😊
 Obrigado pela confiança! 🙏`;
 
                 const numero = cliente.whatsapp.replace(/\D/g, '');
-                const mensagemEncoded = encodeURIComponent(mensagem);
-                const url = `whatsapp://send?phone=55${numero}&text=${mensagemEncoded}`;
-                
-                window.location.href = url;
+                openWhatsAppFallback(numero, mensagem);
                 
                 try {
                     await this.atualizarOrdemServicoServidor(os.id, { whatsappEnviado: true });
@@ -5654,10 +5806,7 @@ Obrigado pela confiança! 🙏`;
                 Nos vemos amanhã! 😊`;
 
                 const numero = cliente.whatsapp.replace(/\D/g, '');
-                const mensagemEncoded = encodeURIComponent(mensagem);
-                const url = `whatsapp://send?phone=55${numero}&text=${mensagemEncoded}`;
-                
-                window.location.href = url;
+                openWhatsAppFallback(numero, mensagem);
                 
                 try {
                     await this.atualizarAgendamentoServidor(agendamento.id, { lembreteEnviado: true });
@@ -6221,17 +6370,34 @@ Obrigado pela confiança! 🙏`;
                         const valorParcela = parseFloat((valorRestante / numParcelas).toFixed(2));
                         // Ajustar última parcela para compensar possíveis arredondamentos
                         const valorUltimaParcela = valorRestante - (valorParcela * (numParcelas - 1));
-                        
+
                         const dataBase = new Date(dataPrimeiraParcela + 'T00:00:00');
-                        
+
+                        // Criar duplicata-mestre para agrupar parcelas
+                        const masterDescricao = `${descricao} - Parcelado (${numParcelas}x)`;
+                        const masterDados = {
+                            tipo: 'receita',
+                            data: data, // data da duplicata pode ser a data inicial
+                            descricao: masterDescricao,
+                            valor: valorRestante,
+                            status: 'parcelado',
+                            observacoes: observacoes ? `${observacoes}\nParcelado em ${numParcelas}x` : `Parcelado em ${numParcelas}x`,
+                            orcamentoId: orcamentoId || null,
+                            clienteId: clienteId || null,
+                            isDuplicata: true,
+                            totalParcelas: numParcelas
+                        };
+
+                        const master = await this.adicionarTransacao(masterDados);
+
                         for (let i = 0; i < numParcelas; i++) {
                             // Calcular data da parcela (adicionar meses de forma segura)
                             const dataParcela = new Date(dataBase);
                             dataParcela.setMonth(dataParcela.getMonth() + i);
-                            
+
                             // Usar valor da última parcela ajustado
                             const valorFinal = i === numParcelas - 1 ? valorUltimaParcela : valorParcela;
-                            
+
                             const dadosParcela = {
                                 tipo,
                                 data: dataParcela.toISOString().split('T')[0],
@@ -6240,12 +6406,15 @@ Obrigado pela confiança! 🙏`;
                                 status: 'pendente',
                                 observacoes: observacoes ? `${observacoes}\nParcela ${i + 1} de ${numParcelas}` : `Parcela ${i + 1} de ${numParcelas}`,
                                 orcamentoId: orcamentoId || null,
-                                clienteId: clienteId || null
+                                clienteId: clienteId || null,
+                                parcelaDe: master.id,
+                                numeroParcela: i + 1,
+                                totalParcelas: numParcelas
                             };
-                            
+
                             await this.adicionarTransacao(dadosParcela);
                         }
-                        
+
                         const mensagem = temEntrada 
                             ? `Entrada e ${numParcelas} parcelas criadas com sucesso!`
                             : `${numParcelas} parcelas criadas com sucesso!`;
@@ -6748,6 +6917,20 @@ Obrigado pela confiança! 🙏`;
                     camposParcelas.style.display = 'none';
                 }
                 this.atualizarResumoFinanceiro();
+            }
+
+            async checkAdminStatusIndex() {
+                try {
+                    const resp = await fetch('/api/admin/status');
+                    if (!resp.ok) return { isAdmin: false };
+                    const data = await resp.json();
+                    // Mostrar/ocultar botões marcados com classe .btn-admin
+                    const adminBtns = document.querySelectorAll('.btn-admin');
+                    adminBtns.forEach(b => { b.style.display = data.isAdmin ? 'none' : ''; });
+                    return data;
+                } catch (e) {
+                    return { isAdmin: false };
+                }
             }
 
             async confirmarTransacao(id) {
@@ -7809,7 +7992,7 @@ Obrigado pela confiança! 🙏`;
                         // Melhorar descrição: número da duplicata + nome do cliente
                         let descricao = t.descricao;
                         if (t.isDuplicata || t.parcelaDe) {
-                            const cliente = this.dados.clientes.find(c => c.id === t.clienteId);
+                            const cliente = this.dados.clientes.find(c => String(c.id) === String(t.clienteId));
                             const nomeCliente = cliente ? cliente.nome : 'Cliente não encontrado';
                             const numDuplicata = t.numeroDuplicata || (t.parcelaDe ? this.dados.transacoes.find(tx => tx.id === t.parcelaDe)?.numeroDuplicata : null);
                             if (numDuplicata) {
@@ -7839,7 +8022,7 @@ Obrigado pela confiança! 🙏`;
                                 <td>${indicador}${descricao}</td>
                                 <td>${t.tipo === 'receita' ? 'Receita' : 'Despesa'}</td>
                                 <td>R$ ${t.valor.toFixed(2)}</td>
-                                <td><span class="badge ${statusBadge}">${t.status === 'parcelado' ? 'Parcelado' : t.status}</span></td>
+                                <td><span class="badge ${statusBadge}">${t.status === 'parcelado' ? 'Aberto/Parcelado' : t.status}</span></td>
                                 <td>${acoes.join(' ')}</td>
                             </tr>
                         `;
@@ -9241,6 +9424,9 @@ Obrigado pela confiança! 🙏`;
         let sistema = null;
 
         document.addEventListener('DOMContentLoaded', async () => {
+            // Verificar se admin está logado
+            verificarStatusAdminAoCarregar();
+            
             if (window.storageReady) {
                 await window.storageReady;
                 sincronizarStateComLocalStorage();
@@ -9265,6 +9451,348 @@ Obrigado pela confiança! 🙏`;
             const win = window.open(url, '_blank');
             if (!win) {
                 alert('Não foi possível abrir nova aba. Verifique o bloqueador de popups.');
+            }
+        }
+
+        // Funções para Login Admin
+        function abrirModalAdminLogin() {
+            document.getElementById('modal-admin-login').style.display = 'block';
+            document.getElementById('admin-username').focus();
+        }
+
+        function fecharModalAdminLogin() {
+            document.getElementById('modal-admin-login').style.display = 'none';
+            document.getElementById('admin-username').value = '';
+            document.getElementById('admin-password').value = '';
+        }
+
+        async function fazerLoginAdmin() {
+            const username = document.getElementById('admin-username').value;
+            const password = document.getElementById('admin-password').value;
+
+            if (!username || !password) {
+                alert('Por favor, preencha usuário e senha');
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/admin/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (!resp.ok) {
+                    const data = await resp.json();
+                    alert(data.error || 'Erro ao fazer login de admin');
+                    return;
+                }
+
+                alert('Login de administrador realizado com sucesso!');
+                fecharModalAdminLogin();
+                
+                // Inicializar sistema se não estiver já
+                if (!sistema) {
+                    sistema = new NegoCarSystem();
+                    window.sistema = sistema;
+                    inicializarFuncoesFinanceiro();
+                }
+                
+                // Mostrar modo admin na UI
+                mostrarModoAdmin();
+                
+                // Entrar direto no app chamando entrarNoSistema para configurar tudo corretamente
+                sistema.entrarNoSistema();
+            } catch (err) {
+                console.error('Erro ao fazer login:', err);
+                alert('Erro ao conectar com o servidor');
+            }
+        }
+
+        // Permitir Enter no modal de login admin
+        document.addEventListener('DOMContentLoaded', () => {
+            const adminPasswordInput = document.getElementById('admin-password');
+            if (adminPasswordInput) {
+                adminPasswordInput.addEventListener('keypress', (e) => {
+                    if (e.key === 'Enter') {
+                        fazerLoginAdmin();
+                    }
+                });
+            }
+        });
+
+        // Mostrar indicador de modo admin
+        function mostrarModoAdmin() {
+            const badge = document.getElementById('admin-mode-badge');
+            const logoutBtn = document.getElementById('btn-logout-admin');
+            if (badge) badge.style.display = 'block';
+            if (logoutBtn) logoutBtn.style.display = 'block';
+        }
+
+        // Ocultar indicador de modo admin
+        function ocultarModoAdmin() {
+            const badge = document.getElementById('admin-mode-badge');
+            const logoutBtn = document.getElementById('btn-logout-admin');
+            if (badge) badge.style.display = 'none';
+            if (logoutBtn) logoutBtn.style.display = 'none';
+        }
+
+        // Fazer logout do modo admin
+        async function fazerLogoutAdmin() {
+            try {
+                const resp = await fetch('/api/admin/logout', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+
+                if (resp.ok) {
+                    ocultarModoAdmin();
+                    alert('Saído do modo administrador');
+                    // Voltar para tela de login
+                    document.getElementById('app-container').classList.add('hidden');
+                    document.getElementById('login-screen').style.display = 'flex';
+                } else {
+                    alert('Erro ao fazer logout');
+                }
+            } catch (err) {
+                console.error('Erro ao fazer logout:', err);
+                alert('Erro ao conectar com o servidor');
+            }
+        }
+
+        // Verificar se admin está logado ao carregar a página
+        async function verificarStatusAdminAoCarregar() {
+            try {
+                const resp = await fetch('/api/admin/status');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    if (data.isAdmin) {
+                        mostrarModoAdmin();
+                    }
+                }
+            } catch (err) {
+                console.error('Erro ao verificar status admin:', err);
+            }
+        }
+
+        // Funções para Modal de Limpeza de Registros Antigos
+        let cleanupRecordsList = []; // Armazena lista de registros para limpeza
+
+        function abrirModalLimpezaFinanceiro() {
+            document.getElementById('modal-limpeza-financeiro').style.display = 'block';
+            document.getElementById('cleanup-module').focus();
+            limparFormularioLimpeza();
+        }
+
+        function fecharModalLimpezaFinanceiro() {
+            document.getElementById('modal-limpeza-financeiro').style.display = 'none';
+            limparFormularioLimpeza();
+        }
+
+        function limparFormularioLimpeza() {
+            document.getElementById('cleanup-module').value = '';
+            document.getElementById('cleanup-from-date').value = '';
+            document.getElementById('cleanup-to-date').value = '';
+            document.getElementById('cleanup-confirm-admin').value = '';
+            document.getElementById('cleanup-records-list').innerHTML = '';
+            document.getElementById('cleanup-records-container').style.display = 'none';
+            document.getElementById('cleanup-no-selection').style.display = 'block';
+            document.getElementById('cleanup-delete-btn').style.display = 'none';
+            document.getElementById('cleanup-select-all').checked = false;
+            cleanupRecordsList = [];
+        }
+
+        async function atualizarListaRegistrosLimpeza() {
+            const module = document.getElementById('cleanup-module').value;
+            const fromDate = document.getElementById('cleanup-from-date').value;
+            const toDate = document.getElementById('cleanup-to-date').value;
+
+            if (!module) {
+                alert('Por favor, selecione um módulo');
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/cleanup/list-records', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        module: module,
+                        fromDate: fromDate || null,
+                        toDate: toDate || null
+                    })
+                });
+
+                if (!resp.ok) {
+                    const data = await resp.json();
+                    alert('Erro: ' + (data.error || 'Erro ao carregar registros'));
+                    return;
+                }
+
+                const data = await resp.json();
+                cleanupRecordsList = data.records || [];
+                exibirRegistrosLimpeza(cleanupRecordsList);
+            } catch (err) {
+                console.error('Erro ao carregar registros:', err);
+                alert('Erro ao conectar com o servidor');
+            }
+        }
+
+        function exibirRegistrosLimpeza(records) {
+            const container = document.getElementById('cleanup-records-container');
+            const noSelection = document.getElementById('cleanup-no-selection');
+            const recordsList = document.getElementById('cleanup-records-list');
+            const countEl = document.getElementById('cleanup-records-count');
+            const deleteBtn = document.getElementById('cleanup-delete-btn');
+
+            if (records.length === 0) {
+                container.style.display = 'none';
+                noSelection.innerHTML = '<p style="color: #999; padding: 20px;">Nenhum registro encontrado para o período selecionado</p>';
+                noSelection.style.display = 'block';
+                deleteBtn.style.display = 'none';
+                return;
+            }
+
+            noSelection.style.display = 'none';
+            container.style.display = 'block';
+            deleteBtn.style.display = 'block';
+            countEl.textContent = `Total: ${records.length} registro(s)`;
+
+            recordsList.innerHTML = records.map(record => `
+                <div style="padding: 10px; border-bottom: 1px solid #ddd; display: flex; align-items: center; gap: 10px;">
+                    <input type="checkbox" class="cleanup-record-checkbox" value="${record.id}" 
+                           onchange="atualizarSelecionados()">
+                    <div style="flex: 1;">
+                        <strong>#${record.id}</strong> - ${record.descricao || record.numero || record.problema || 'Sem descrição'}
+                        <br>
+                        <small style="color: #999;">Data: ${new Date(record.data).toLocaleDateString('pt-BR')}</small>
+                    </div>
+                    <button class="btn btn-sm btn-danger" onclick="excluirRegistroIndividual('${record.id}', '${document.getElementById('cleanup-module').value}')" 
+                            style="padding: 5px 10px; font-size: 12px;">
+                        Excluir
+                    </button>
+                </div>
+            `).join('');
+        }
+
+        function selecionarTodosRegistrosLimpeza() {
+            const checkboxes = document.querySelectorAll('.cleanup-record-checkbox');
+            const selectAll = document.getElementById('cleanup-select-all').checked;
+            checkboxes.forEach(cb => cb.checked = selectAll);
+            atualizarSelecionados();
+        }
+
+        function atualizarSelecionados() {
+            const checkboxes = document.querySelectorAll('.cleanup-record-checkbox:checked');
+            const selectAllCheckbox = document.getElementById('cleanup-select-all');
+            const totalCheckboxes = document.querySelectorAll('.cleanup-record-checkbox').length;
+            
+            selectAllCheckbox.checked = checkboxes.length === totalCheckboxes && totalCheckboxes > 0;
+        }
+
+        async function excluirRegistroIndividual(recordId, module) {
+            if (!confirm('Tem certeza que deseja excluir este registro?\n\nEsta ação não pode ser desfeita!')) {
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/cleanup/delete-records', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        module: module,
+                        recordIds: [recordId],
+                        confirm: true
+                    })
+                });
+
+                if (!resp.ok) {
+                    const data = await resp.json();
+                    alert('Erro: ' + (data.error || 'Erro ao deletar registro'));
+                    return;
+                }
+
+                alert('✓ Registro excluído com sucesso!');
+                // Remover do cache local (localStorage) para evitar que sincronização re-crie o registro
+                try {
+                    const mapKey = module === 'ordens_servico' ? 'ordensServico' : module;
+                    if (sistema && sistema.dados && Array.isArray(sistema.dados[mapKey])) {
+                        sistema.dados[mapKey] = sistema.dados[mapKey].filter(it => String(it.id) !== String(recordId));
+                        sistema.salvarDados(mapKey);
+                    }
+                } catch (e) { console.warn('Falha ao atualizar cache local após exclusão:', e); }
+
+                atualizarListaRegistrosLimpeza(); // Recarregar lista
+            } catch (err) {
+                console.error('Erro ao excluir registro:', err);
+                alert('Erro ao conectar com o servidor');
+            }
+        }
+
+        async function executarLimpezaFinanceiro() {
+            const module = document.getElementById('cleanup-module').value;
+            const confirmText = document.getElementById('cleanup-confirm-admin').value;
+            const checkboxes = document.querySelectorAll('.cleanup-record-checkbox:checked');
+
+            if (!module) {
+                alert('Selecione um módulo');
+                return;
+            }
+
+            if (checkboxes.length === 0) {
+                alert('Selecione pelo menos um registro para excluir');
+                return;
+            }
+
+            if (confirmText !== 'DELETE') {
+                alert('Digite "DELETE" para confirmar a exclusão');
+                return;
+            }
+
+            const recordIds = Array.from(checkboxes).map(cb => cb.value);
+
+            if (!confirm(`⚠️ Tem certeza que deseja excluir ${recordIds.length} registro(s)?\n\nEsta ação não pode ser desfeita!`)) {
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/cleanup/delete-records', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ 
+                        module: module,
+                        recordIds: recordIds,
+                        confirm: true
+                    })
+                });
+
+                if (!resp.ok) {
+                    const data = await resp.json();
+                    alert('Erro: ' + (data.error || 'Erro ao executar limpeza'));
+                    return;
+                }
+
+                const data = await resp.json();
+                alert(`✓ Limpeza concluída!\n\nRegistros removidos: ${data.deleted}\nBackup: ${data.backup || 'Nenhum'}`);
+                fecharModalLimpezaFinanceiro();
+                
+                // Recarregar dados se sistema estiver inicializado
+                if (sistema && sistema.dados) {
+                    // Atualizar cache local removendo os ids excluídos para evitar re-criação por sincronização
+                    try {
+                        const mapKey = module === 'ordens_servico' ? 'ordensServico' : module;
+                        const idsToRemove = recordIds.map(id => String(id));
+                        if (Array.isArray(sistema.dados[mapKey])) {
+                            sistema.dados[mapKey] = sistema.dados[mapKey].filter(it => !idsToRemove.includes(String(it.id)));
+                            sistema.salvarDados(mapKey);
+                        }
+                    } catch (e) { console.warn('Erro ao atualizar cache local após limpeza:', e); }
+
+                    if (typeof sistema.carregarDados === 'function') sistema.carregarDados();
+                }
+            } catch (err) {
+                console.error('Erro ao executar limpeza:', err);
+                alert('Erro ao conectar com o servidor');
             }
         }
     </script>

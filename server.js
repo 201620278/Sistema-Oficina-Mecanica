@@ -8,6 +8,59 @@ const fs = require('fs');
 const app = express();
 const port = 3000;
 
+const crypto = require('crypto');
+
+// In-memory store for admin tokens (simple implementation)
+const adminTokens = new Set();
+
+// Configuração de schema por módulo para limpeza/backup
+const CLEANUP_MODULES = {
+    agendamentos: {
+        table: 'agendamentos',
+        dateField: 'data',
+        columns: [
+            { name: 'problema', alias: 'descricao' },
+            { name: 'numero', alias: 'numero' }
+        ]
+    },
+
+    transacoes: {
+        table: 'transacoes',
+        dateField: 'data',
+        columns: [
+            { name: 'descricao', alias: 'descricao' },
+            { name: 'valor', alias: 'valor' }
+        ]
+    },
+
+    clientes: {
+        table: 'clientes',
+        dateField: 'created_at',
+        columns: [
+            { name: 'nome', alias: 'descricao' },
+            { name: 'telefone', alias: 'numero' }
+        ]
+    }
+    ,
+    orcamentos: {
+        table: 'orcamentos',
+        dateField: 'data',
+        columns: [
+            { name: 'observacoes', alias: 'descricao' },
+            { name: 'numero', alias: 'numero' },
+            { name: 'valor_total', alias: 'valor' }
+        ]
+    },
+    ordens_servico: {
+        table: 'ordens_servico',
+        dateField: 'data_abertura',
+        columns: [
+            { name: 'observacoes', alias: 'descricao' },
+            { name: 'numero', alias: 'numero' }
+        ]
+    }
+};
+
 // Middlewares
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
@@ -16,7 +69,7 @@ app.use(express.static('public'));
 
 // Configuração do banco de dados SQLite local
 const dbPath = path.join(__dirname, 'database.db');
-const db = new sqlite3.Database(dbPath, (err) => {
+const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
     if (err) {
         console.error('Erro ao conectar ao banco de dados:', err.message);
     } else {
@@ -24,6 +77,9 @@ const db = new sqlite3.Database(dbPath, (err) => {
         inicializarBanco();
     }
 });
+
+// Evitar que a conexão feche antes de usar
+db.configure('busyTimeout', 30000);
 
 // Inicializar tabelas do banco de dados
 function inicializarBanco() {
@@ -164,7 +220,9 @@ function inicializarBanco() {
             'ALTER TABLE transacoes ADD COLUMN parcelado INTEGER DEFAULT 0',
             'ALTER TABLE transacoes ADD COLUMN num_parcelas INTEGER',
             'ALTER TABLE transacoes ADD COLUMN confirmado_em TEXT',
-            'ALTER TABLE transacoes ADD COLUMN criado_em TEXT'
+            'ALTER TABLE transacoes ADD COLUMN criado_em TEXT',
+            'ALTER TABLE transacoes ADD COLUMN vencimento TEXT',
+            'ALTER TABLE transacoes ADD COLUMN data_pagamento TEXT'
         ];
 
         transacaoColumnsToAdd.forEach(sql => {
@@ -223,6 +281,52 @@ function inicializarBanco() {
 
         console.log('Tabelas do banco de dados inicializadas com sucesso');
     });
+}
+
+// Helper para normalizar campos de uma transação antes de enviar ao cliente
+function normalizeTransacao(row) {
+    const normalized = Object.assign({}, row);
+
+    // clienteId: preferir cliente_id, clienteId; garantir número ou null
+    let cid = row.cliente_id !== undefined && row.cliente_id !== null ? row.cliente_id : row.clienteId;
+    if (cid === '' || cid === false || cid === true) cid = null;
+    if (cid !== null && cid !== undefined) {
+        const n = parseInt(cid);
+        normalized.clienteId = Number.isNaN(n) ? String(cid) : n;
+    } else {
+        normalized.clienteId = null;
+    }
+
+    // parcelado: aceitar 1/0, '1'/'0', true/false
+    normalized.parcelado = (row.parcelado === 1 || row.parcelado === '1' || row.parcelado === true || row.parcelado === 'true');
+
+    // valor: garantir number
+    let v = row.valor !== undefined ? row.valor : row.value;
+    if (typeof v === 'string') {
+        // remover milhares e trocar vírgula decimal
+        v = v.replace(/[^0-9,-\.]/g, '').replace(/\./g, '').replace(/,/g, '.');
+    }
+    const vn = parseFloat(v);
+    normalized.valor = Number.isFinite(vn) ? vn : 0;
+
+    // status: normalizar para lowercase se existir
+    normalized.status = row.status ? String(row.status).toLowerCase() : 'pendente';
+
+    // vencimento/data: tentar normalizar para ISO date (YYYY-MM-DD)
+    const venc = row.vencimento || row.data || row.created_at || row.criado_em;
+    if (venc) {
+        try {
+            const d = new Date(venc);
+            if (!isNaN(d.getTime())) normalized.vencimento = d.toISOString();
+            else normalized.vencimento = null;
+        } catch (e) {
+            normalized.vencimento = null;
+        }
+    } else {
+        normalized.vencimento = null;
+    }
+
+    return normalized;
 }
 
 // Rotas para servir arquivos estáticos
@@ -299,22 +403,23 @@ app.get('/api/transacoes', (req, res) => {
             res.status(500).json({ error: err.message });
             return;
         }
-        const transacoes = rows.map(row => ({
-            ...row,
-            orcamentoId: row.orcamento_id,
-            clienteId: row.cliente_id,
-            categoriaId: row.categoria_id,
-            parcelaDe: row.parcela_de,
-            numeroParcela: row.numero_parcela,
-            totalParcelas: row.total_parcelas,
-            isDuplicata: row.is_duplicata === 1,
-            numeroDuplicata: row.numero_duplicata,
-            formaPagamento: row.forma_pagamento,
-            parcelado: row.parcelado === 1,
-            numParcelas: row.num_parcelas,
-            confirmadoEm: row.confirmado_em,
-            criadoEm: row.criado_em
-        }));
+        const transacoes = rows.map(row => {
+            const n = normalizeTransacao(row);
+            return {
+                ...n,
+                orcamentoId: row.orcamento_id || row.orcamentoId || null,
+                categoriaId: row.categoria_id || row.categoriaId || null,
+                parcelaDe: row.parcela_de || row.parcelaDe || null,
+                numeroParcela: row.numero_parcela || row.numeroParcela || null,
+                totalParcelas: row.total_parcelas || row.totalParcelas || null,
+                isDuplicata: row.is_duplicata === 1 || row.isDuplicata === true,
+                numeroDuplicata: row.numero_duplicata || row.numeroDuplicata || null,
+                formaPagamento: row.forma_pagamento || row.formaPagamento || null,
+                numParcelas: row.num_parcelas || row.numParcelas || null,
+                confirmadoEm: row.confirmado_em || row.confirmadoEm || null,
+                criadoEm: row.criado_em || row.criadoEm || null
+            };
+        });
         res.json(transacoes);
     });
 });
@@ -400,6 +505,130 @@ app.delete('/api/storage', (req, res) => {
         }
         res.json({ message: 'Todos os dados de storage foram removidos' });
     });
+});
+
+// (Removidos handlers duplicados de lista/exclusão de limpeza — versão consolidada mantida mais abaixo)
+
+// Endpoint seguro para limpar registros antigos do módulo financeiro
+// Requisitos de segurança:
+// - body.beforeDate (YYYY-MM-DD) obrigatório
+// - body.confirm === true
+// - Se variável de ambiente ADMIN_PASSWORD definida, header 'x-admin-password' deve corresponder
+app.post('/api/financeiro/cleanup', (req, res) => {
+    const { beforeDate, confirm } = req.body || {};
+
+    if (!beforeDate) {
+        res.status(400).json({ error: 'beforeDate é obrigatório (YYYY-MM-DD)' });
+        return;
+    }
+    if (!confirm) {
+        res.status(400).json({ error: 'Confirmação obrigatória. Envie { confirm: true }' });
+        return;
+    }
+
+    // Autenticação: aceitar header x-admin-password OR cookie admin_token válido
+    const adminPassEnv = process.env.ADMIN_PASSWORD;
+    const provided = req.headers['x-admin-password'];
+    const cookieHeader = req.headers.cookie || '';
+    const cookieToken = (cookieHeader.match(/(?:^|; )admin_token=([^;]+)/) || [])[1];
+
+    let authorized = false;
+    if (adminPassEnv && provided && provided === adminPassEnv) authorized = true;
+    if (cookieToken && adminTokens.has(cookieToken)) authorized = true;
+
+    if (!authorized) {
+        res.status(403).json({ error: 'Acesso negado. É necessária autenticação administrativa.' });
+        return;
+    }
+
+    // Buscar registros que serão removidos (baseado em vencimento ou data)
+    const sqlSelect = `SELECT * FROM transacoes WHERE (vencimento IS NOT NULL AND vencimento <= ?) OR (data IS NOT NULL AND data <= ?)`;
+    db.all(sqlSelect, [beforeDate, beforeDate], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+
+        if (!rows || rows.length === 0) {
+            res.json({ deleted: 0, backup: null, message: 'Nenhum registro encontrado antes da data informada' });
+            return;
+        }
+
+        // Garantir diretório de backup
+        const backupsDir = path.join(__dirname, 'backups');
+        try {
+            if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir);
+        } catch (mkdirErr) {
+            console.error('Erro ao criar pasta de backups:', mkdirErr.message);
+        }
+
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+        const backupPath = path.join(backupsDir, `financeiro-backup-${timestamp}.json`);
+
+        try {
+            fs.writeFileSync(backupPath, JSON.stringify(rows, null, 2), 'utf8');
+        } catch (writeErr) {
+            res.status(500).json({ error: 'Erro ao salvar backup: ' + writeErr.message });
+            return;
+        }
+
+        // Fazer remoção segura por ids
+        const ids = rows.map(r => r.id).filter(Boolean);
+        if (ids.length === 0) {
+            res.json({ deleted: 0, backup: backupPath });
+            return;
+        }
+
+        const placeholders = ids.map(() => '?').join(',');
+        const deleteSql = `DELETE FROM transacoes WHERE id IN (${placeholders})`;
+        db.run(deleteSql, ids, function(deleteErr) {
+            if (deleteErr) {
+                res.status(500).json({ error: deleteErr.message });
+                return;
+            }
+
+            res.json({ deleted: this.changes, backup: path.relative(__dirname, backupPath) });
+        });
+    });
+});
+
+// Admin login endpoints (master login)
+// Credenciais pré-configuradas do administrador do sistema
+const ADMIN_USERNAME = 'Cicero Diego';
+const ADMIN_PASSWORD_HARDCODED = 'Pdb100623@';
+
+app.post('/api/admin/login', express.json(), (req, res) => {
+    const { username, password } = req.body || {};
+    
+    // Validar credenciais contra o admin pré-configurado
+    if (!username || !password || username !== ADMIN_USERNAME || password !== ADMIN_PASSWORD_HARDCODED) {
+        res.status(403).json({ error: 'Usuário ou senha inválida' });
+        return;
+    }
+
+    const token = crypto.randomBytes(24).toString('hex');
+    adminTokens.add(token);
+    // set cookie (HttpOnly)
+    res.cookie('admin_token', token, { httpOnly: true, sameSite: 'lax' });
+    res.json({ success: true });
+});
+
+app.post('/api/admin/logout', (req, res) => {
+    const cookieHeader = req.headers.cookie || '';
+    const cookieToken = (cookieHeader.match(/(?:^|; )admin_token=([^;]+)/) || [])[1];
+    if (cookieToken && adminTokens.has(cookieToken)) {
+        adminTokens.delete(cookieToken);
+    }
+    // clear cookie
+    res.clearCookie('admin_token');
+    res.json({ success: true });
+});
+
+app.get('/api/admin/status', (req, res) => {
+    const cookieHeader = req.headers.cookie || '';
+    const cookieToken = (cookieHeader.match(/(?:^|; )admin_token=([^;]+)/) || [])[1];
+    const isAdmin = cookieToken && adminTokens.has(cookieToken);
+    res.json({ isAdmin: !!isAdmin });
 });
 
 // POST endpoints
@@ -544,6 +773,50 @@ app.post('/api/agendamentos', (req, res) => {
     const lembreteEnviado = agendamento.lembreteEnviado || agendamento.lembrete_enviado ? 1 : 0;
     const dataFinalizacao = agendamento.dataFinalizacao || agendamento.data_finalizacao || null;
 
+    // Checagem idempotente: se foi enviado um `id` customizado e já existe, retornar registro existente
+    if (possuiIdCustomizado) {
+        db.get('SELECT * FROM agendamentos WHERE id = ?', [idCustomizado], (errExist, rowExist) => {
+            if (errExist) {
+                res.status(500).json({ error: errExist.message });
+                return;
+            }
+            if (rowExist) {
+                res.json({
+                    ...rowExist,
+                    notificacoes: rowExist.notificacoes ? JSON.parse(rowExist.notificacoes) : []
+                });
+                return;
+            }
+            // continuar fluxo normal caso não exista
+            proceedAfterIdCheck();
+        });
+    } else {
+        proceedAfterIdCheck();
+    }
+
+    function proceedAfterIdCheck() {
+        // Heurística anti-duplicação: evitar inserir agendamento igual (cliente+data+hora)
+        if (clienteId && agendamento.data) {
+            db.get('SELECT * FROM agendamentos WHERE cliente_id = ? AND data = ? AND hora = ? LIMIT 1', [clienteId, agendamento.data, hora], (dupErr, dupRow) => {
+                if (dupErr) {
+                    res.status(500).json({ error: dupErr.message });
+                    return;
+                }
+                if (dupRow) {
+                    res.json({
+                        ...dupRow,
+                        notificacoes: dupRow.notificacoes ? JSON.parse(dupRow.notificacoes) : []
+                    });
+                    return;
+                }
+                // Nenhum duplicado encontrado — prosseguir com lógica de número
+                continueNumeroFlow();
+            });
+        } else {
+            continueNumeroFlow();
+        }
+    }
+
     const inserirAgendamento = (numeroFinal) => {
         const baseSql = `(
                 cliente_id,
@@ -631,19 +904,21 @@ app.post('/api/agendamentos', (req, res) => {
         );
     };
 
-    if (!numeroInformado || Number.isNaN(numeroInicial)) {
-        db.get('SELECT MAX(numero) AS maxNumero FROM agendamentos', [], (err, row) => {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            const proximoNumero = row && row.maxNumero !== null && row.maxNumero !== undefined
-                ? row.maxNumero + 1
-                : 0;
-            inserirAgendamento(proximoNumero);
-        });
-    } else {
-        inserirAgendamento(numeroInicial);
+    function continueNumeroFlow() {
+        if (!numeroInformado || Number.isNaN(numeroInicial)) {
+            db.get('SELECT MAX(numero) AS maxNumero FROM agendamentos', [], (err, row) => {
+                if (err) {
+                    res.status(500).json({ error: err.message });
+                    return;
+                }
+                const proximoNumero = row && row.maxNumero !== null && row.maxNumero !== undefined
+                    ? row.maxNumero + 1
+                    : 0;
+                inserirAgendamento(proximoNumero);
+            });
+        } else {
+            inserirAgendamento(numeroInicial);
+        }
     }
 });
 
@@ -758,19 +1033,66 @@ app.post('/api/orcamentos', (req, res) => {
         );
     };
 
-    if (orcamento.numero === undefined || orcamento.numero === null || orcamento.numero === '') {
-        db.get('SELECT MAX(numero) AS maxNumero FROM orcamentos', [], (err, row) => {
-            if (err) {
-                res.status(500).json({ error: err.message });
+    // Checagem idempotente: se id customizado foi enviado e já existe, retornar o registro existente
+    if (possuiIdCustomizado) {
+        db.get('SELECT * FROM orcamentos WHERE id = ?', [idCustomizado], (errExist, rowExist) => {
+            if (errExist) {
+                res.status(500).json({ error: errExist.message });
                 return;
             }
-            const proximoNumero = row && row.maxNumero !== null && row.maxNumero !== undefined
-                ? row.maxNumero + 1
-                : 0;
-            inserirOrcamento(proximoNumero);
+            if (rowExist) {
+                res.json({
+                    ...rowExist,
+                    servicos: rowExist.servicos ? JSON.parse(rowExist.servicos) : [],
+                    pecas: rowExist.pecas ? JSON.parse(rowExist.pecas) : []
+                });
+                return;
+            }
+            proceedOrcamentoAfterIdCheck();
         });
     } else {
-        inserirOrcamento(parseInt(orcamento.numero));
+        proceedOrcamentoAfterIdCheck();
+    }
+
+    function proceedOrcamentoAfterIdCheck() {
+        // Heurística anti-duplicação: evitar criar orcamento duplicado (cliente + data + valor_total)
+        if (clienteId && dataOrcamento) {
+            db.get('SELECT * FROM orcamentos WHERE cliente_id = ? AND data = ? AND valor_total = ? LIMIT 1', [clienteId, dataOrcamento, total], (dupErr, dupRow) => {
+                if (dupErr) {
+                    res.status(500).json({ error: dupErr.message });
+                    return;
+                }
+                if (dupRow) {
+                    res.json({
+                        ...dupRow,
+                        servicos: dupRow.servicos ? JSON.parse(dupRow.servicos) : [],
+                        pecas: dupRow.pecas ? JSON.parse(dupRow.pecas) : []
+                    });
+                    return;
+                }
+                // Prosseguir com geração de número
+                finishOrcamentoNumeroFlow();
+            });
+        } else {
+            finishOrcamentoNumeroFlow();
+        }
+    }
+
+    function finishOrcamentoNumeroFlow() {
+        if (orcamento.numero === undefined || orcamento.numero === null || orcamento.numero === '') {
+            db.get('SELECT MAX(numero) AS maxNumero FROM orcamentos', [], (err, row) => {
+                if (err) {
+                    res.status(500).json({ error: err.message });
+                    return;
+                }
+                const proximoNumero = row && row.maxNumero !== null && row.maxNumero !== undefined
+                    ? row.maxNumero + 1
+                    : 0;
+                inserirOrcamento(proximoNumero);
+            });
+        } else {
+            inserirOrcamento(parseInt(orcamento.numero));
+        }
     }
 });
 
@@ -882,19 +1204,65 @@ app.post('/api/ordens-servico', (req, res) => {
         );
     };
 
-    if (os.numero === undefined || os.numero === null || os.numero === '') {
-        db.get('SELECT MAX(numero) AS maxNumero FROM ordens_servico', [], (err, row) => {
-            if (err) {
-                res.status(500).json({ error: err.message });
+    // Checagem idempotente por id customizado
+    if (possuiIdCustomizado) {
+        db.get('SELECT * FROM ordens_servico WHERE id = ?', [idCustomizado], (errExist, rowExist) => {
+            if (errExist) {
+                res.status(500).json({ error: errExist.message });
                 return;
             }
-            const proximoNumero = row && row.maxNumero !== null && row.maxNumero !== undefined
-                ? row.maxNumero + 1
-                : 1;
-            inserirOS(proximoNumero);
+            if (rowExist) {
+                res.json({
+                    ...rowExist,
+                    servicos: rowExist.servicos ? JSON.parse(rowExist.servicos) : [],
+                    pecas: rowExist.pecas ? JSON.parse(rowExist.pecas) : []
+                });
+                return;
+            }
+            proceedOSAfterIdCheck();
         });
     } else {
-        inserirOS(parseInt(os.numero));
+        proceedOSAfterIdCheck();
+    }
+
+    function proceedOSAfterIdCheck() {
+        // Heurística anti-duplicação: se já existe OS para o mesmo orcamento, retornar existente
+        if (orcamentoId) {
+            db.get('SELECT * FROM ordens_servico WHERE orcamento_id = ? LIMIT 1', [orcamentoId], (dupErr, dupRow) => {
+                if (dupErr) {
+                    res.status(500).json({ error: dupErr.message });
+                    return;
+                }
+                if (dupRow) {
+                    res.json({
+                        ...dupRow,
+                        servicos: dupRow.servicos ? JSON.parse(dupRow.servicos) : [],
+                        pecas: dupRow.pecas ? JSON.parse(dupRow.pecas) : []
+                    });
+                    return;
+                }
+                finishOSNumeroFlow();
+            });
+        } else {
+            finishOSNumeroFlow();
+        }
+    }
+
+    function finishOSNumeroFlow() {
+        if (os.numero === undefined || os.numero === null || os.numero === '') {
+            db.get('SELECT MAX(numero) AS maxNumero FROM ordens_servico', [], (err, row) => {
+                if (err) {
+                    res.status(500).json({ error: err.message });
+                    return;
+                }
+                const proximoNumero = row && row.maxNumero !== null && row.maxNumero !== undefined
+                    ? row.maxNumero + 1
+                    : 1;
+                inserirOS(proximoNumero);
+            });
+        } else {
+            inserirOS(parseInt(os.numero));
+        }
     }
 });
 
@@ -931,71 +1299,54 @@ app.post('/api/transacoes', (req, res) => {
     const observacoes = transacao.observacoes || '';
     const numeroParcela = transacao.numeroParcela ?? transacao.numero_parcela ?? null;
     const totalParcelas = transacao.totalParcelas ?? transacao.total_parcelas ?? null;
-    const isDuplicata = transacao.isDuplicata ?? transacao.is_duplicata ? 1 : 0;
+    const isDuplicata = (transacao.isDuplicata ?? transacao.is_duplicata) ? 1 : 0;
     const numeroDuplicata = transacao.numeroDuplicata ?? transacao.numero_duplicata ?? null;
     const formaPagamento = transacao.formaPagamento ?? transacao.forma_pagamento ?? null;
     const parcelado = transacao.parcelado ? 1 : 0;
-    const numParcelas = transacao.numParcelas ?? transacao.num_parcelas ?? null;
+    const numParcela = transacao.numParcelas ?? transacao.num_parcelas ?? null;
     const confirmadoEm = transacao.confirmadoEm ?? transacao.confirmado_em ?? null;
     const criadoEm = transacao.criadoEm ?? transacao.criado_em ?? new Date().toISOString();
 
-    // Função que executa a inserção no banco
-    function doInsert() {
-        const baseSql = `(
-            orcamento_id,
-            cliente_id,
-            categoria_id,
-            descricao,
-            tipo,
-            valor,
-            data,
-            status,
-            observacoes,
-            parcela_de,
-            numero_parcela,
-            total_parcelas,
-            is_duplicata,
-            numero_duplicata,
-            forma_pagamento,
-            parcelado,
-            num_parcelas,
-            confirmado_em,
-            criado_em
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+    // Prepara colunas e params
+    const cols = [
+        'orcamento_id', 'cliente_id', 'categoria_id', 'descricao', 'tipo', 'valor', 'data', 'status',
+        'observacoes', 'parcela_de', 'numero_parcela', 'total_parcelas', 'is_duplicata', 'numero_duplicata',
+        'forma_pagamento', 'parcelado', 'num_parcelas', 'confirmado_em', 'criado_em'
+    ];
 
-        let sql;
+    const paramsBase = [
+        orcamentoId || null,
+        clienteId || null,
+        categoriaId || null,
+        descricao,
+        transacao.tipo,
+        transacao.valor,
+        transacao.data,
+        status,
+        observacoes,
+        parcelaDe || null,
+        numeroParcela,
+        totalParcelas,
+        isDuplicata,
+        numeroDuplicata,
+        formaPagamento,
+        parcelado,
+        numParcela,
+        confirmadoEm,
+        criadoEm
+    ];
+
+    function proceedInsert() {
+        const columns = [...cols];
+        const params = [...paramsBase];
+
         if (possuiIdCustomizado) {
-            sql = `INSERT INTO transacoes (id, ${baseSql.slice(1)}`.replace('VALUES (', 'VALUES (?, ');
-        } else {
-            sql = `INSERT INTO transacoes ${baseSql}`;
+            columns.unshift('id');
+            params.unshift(idCustomizado);
         }
 
-        const params = [
-            ...(possuiIdCustomizado ? [idCustomizado] : []),
-            orcamentoId || null,
-            clienteId || null,
-            categoriaId || null,
-            descricao,
-            transacao.tipo,
-            transacao.valor,
-            transacao.data,
-            status,
-            observacoes,
-            parcelaDe || null,
-            numeroParcela,
-            totalParcelas,
-            isDuplicata,
-            numeroDuplicata,
-            formaPagamento,
-            parcelado,
-            numParcelas,
-            confirmadoEm,
-            criadoEm
-        ];
-
-        // Log para facilitar depuração em caso de mismatch
-        console.log('SQL Inserção transacao:', sql);
-        console.log('Params (count):', params.length, params);
+        const placeholders = '(' + columns.map(() => '?').join(', ') + ')';
+        const sql = `INSERT INTO transacoes (${columns.join(', ')}) VALUES ${placeholders}`;
 
         db.run(sql, params, function(err) {
             if (err) {
@@ -1004,67 +1355,120 @@ app.post('/api/transacoes', (req, res) => {
             }
             const novoId = possuiIdCustomizado ? idCustomizado : this.lastID;
             db.get('SELECT * FROM transacoes WHERE id = ?', [novoId], (err2, row) => {
-                if (err2 || !row) {
-                    res.json({
-                        id: novoId,
-                        orcamentoId: orcamentoId || null,
-                        clienteId: clienteId || null,
-                        categoriaId: categoriaId || null,
-                        descricao,
-                        tipo: transacao.tipo,
-                        valor: transacao.valor,
-                        data: transacao.data,
-                        status,
-                        observacoes,
-                        parcelaDe: parcelaDe || null,
-                        numeroParcela,
-                        totalParcelas,
-                        isDuplicata: isDuplicata === 1,
-                        numeroDuplicata,
-                        formaPagamento,
-                        parcelado: parcelado === 1,
-                        numParcelas,
-                        confirmadoEm,
-                        criadoEm
-                    });
-                } else {
-                    res.json({
-                        ...row,
-                        orcamentoId: row.orcamento_id,
-                        clienteId: row.cliente_id,
-                        categoriaId: row.categoria_id,
-                        parcelaDe: row.parcela_de,
-                        numeroParcela: row.numero_parcela,
-                        totalParcelas: row.total_parcelas,
-                        isDuplicata: row.is_duplicata === 1,
-                        numeroDuplicata: row.numero_duplicata,
-                        formaPagamento: row.forma_pagamento,
-                        parcelado: row.parcelado === 1,
-                        numParcelas: row.num_parcelas,
-                        confirmadoEm: row.confirmado_em,
-                        criadoEm: row.criado_em
-                    });
+                if (err2) {
+                    res.status(500).json({ error: err2.message });
+                    return;
                 }
+                if (!row) {
+                    res.json({ id: novoId });
+                    return;
+                }
+                res.json({
+                    ...row,
+                    orcamentoId: row.orcamento_id,
+                    clienteId: row.cliente_id,
+                    categoriaId: row.categoria_id,
+                    parcelaDe: row.parcela_de,
+                    numeroParcela: row.numero_parcela,
+                    totalParcelas: row.total_parcelas,
+                    isDuplicata: row.is_duplicata === 1,
+                    numeroDuplicata: row.numero_duplicata,
+                    formaPagamento: row.forma_pagamento,
+                    parcelado: row.parcelado === 1,
+                    numParcela: row.num_parcelas,
+                    confirmadoEm: row.confirmado_em,
+                    criadoEm: row.criado_em
+                });
             });
         });
     }
 
-    // Se for passado um orcamentoId, verificar se já existe transação para ele e bloquear duplicata
-    if (orcamentoId) {
-        db.get('SELECT id FROM transacoes WHERE orcamento_id = ? LIMIT 1', [orcamentoId], (errCheck, rowCheck) => {
-            if (errCheck) {
-                res.status(500).json({ error: errCheck.message });
-                return;
-            }
-            if (rowCheck) {
-                res.status(409).json({ error: 'Já existe transação para este orçamento' });
-                return;
-            }
-            // não existe ainda - prosseguir com inserção
-            doInsert();
-        });
-    } else {
-        doInsert();
+    preInsertChecks();
+
+    function preInsertChecks() {
+        // Se id customizado foi fornecido, retornar registro existente
+        if (possuiIdCustomizado) {
+            db.get('SELECT * FROM transacoes WHERE id = ?', [idCustomizado], (errExist, rowExist) => {
+                if (errExist) {
+                    res.status(500).json({ error: errExist.message });
+                    return;
+                }
+                if (rowExist) {
+                    res.json({
+                        ...rowExist,
+                        orcamentoId: rowExist.orcamento_id,
+                        clienteId: rowExist.cliente_id,
+                        categoriaId: rowExist.categoria_id,
+                        parcelaDe: rowExist.parcela_de,
+                        numeroParcela: rowExist.numero_parcela,
+                        totalParcelas: rowExist.total_parcelas,
+                        isDuplicata: rowExist.is_duplicata === 1,
+                        numeroDuplicata: rowExist.numero_duplicata,
+                        formaPagamento: rowExist.forma_pagamento,
+                        parcelado: rowExist.parcelado === 1,
+                        numParcela: rowExist.num_parcelas,
+                        confirmadoEm: rowExist.confirmado_em,
+                        criadoEm: rowExist.criado_em
+                    });
+                    return;
+                }
+                // não existe, prosseguir para checagem por orçamento
+                checkByOrcamento();
+            });
+            return;
+        }
+
+        // Heurística: evitar duplicar lançamentos idênticos (cliente+tipo+valor+data)
+        if (clienteId && transacao.tipo && transacao.valor && transacao.data) {
+            db.get('SELECT * FROM transacoes WHERE cliente_id = ? AND tipo = ? AND valor = ? AND data = ? LIMIT 1', [clienteId, transacao.tipo, transacao.valor, transacao.data], (dupErr, dupRow) => {
+                if (dupErr) {
+                    res.status(500).json({ error: dupErr.message });
+                    return;
+                }
+                if (dupRow) {
+                    res.json({
+                        ...dupRow,
+                        orcamentoId: dupRow.orcamento_id,
+                        clienteId: dupRow.cliente_id,
+                        categoriaId: dupRow.categoria_id,
+                        parcelaDe: dupRow.parcela_de,
+                        numeroParcela: dupRow.numero_parcela,
+                        totalParcelas: dupRow.total_parcelas,
+                        isDuplicata: dupRow.is_duplicata === 1,
+                        numeroDuplicata: dupRow.numero_duplicata,
+                        formaPagamento: dupRow.forma_pagamento,
+                        parcelado: dupRow.parcelado === 1,
+                        numParcela: dupRow.num_parcelas,
+                        confirmadoEm: dupRow.confirmado_em,
+                        criadoEm: dupRow.criado_em
+                    });
+                    return;
+                }
+                checkByOrcamento();
+            });
+            return;
+        }
+
+        // Por padrão, checar se existe transacao para o mesmo orcamento
+        checkByOrcamento();
+    }
+
+    function checkByOrcamento() {
+        if (orcamentoId) {
+            db.get('SELECT id FROM transacoes WHERE orcamento_id = ? LIMIT 1', [orcamentoId], (errCheck, rowCheck) => {
+                if (errCheck) {
+                    res.status(500).json({ error: errCheck.message });
+                    return;
+                }
+                if (rowCheck) {
+                    res.status(409).json({ error: 'Já existe transação para este orçamento' });
+                    return;
+                }
+                proceedInsert();
+            });
+        } else {
+            proceedInsert();
+        }
     }
 });
 
@@ -1637,6 +2041,553 @@ process.on('SIGINT', () => {
         }
         console.log('Conexão com o banco de dados fechada.');
         process.exit(0);
+    });
+});
+
+// Endpoints para limpeza/backup genérico (admin)
+// Construir mapa interno a partir da configuração `CLEANUP_MODULES` (mantém compatibilidade)
+const cleanupModuleMap = (() => {
+    const m = {};
+    for (const key of Object.keys(CLEANUP_MODULES)) {
+        const cfg = CLEANUP_MODULES[key] || {};
+        m[key] = {
+            table: cfg.table || key,
+            dateCol: cfg.dateField || cfg.date || 'data',
+            labelCols: Array.isArray(cfg.columns) ? cfg.columns.map(c => c.name) : ['id']
+        };
+    }
+    // Mapear aliases úteis
+    if (!m['transacoes'] && m['transacoes'] === undefined) {
+        m['transacoes'] = { table: 'transacoes', dateCol: 'data', labelCols: ['descricao'] };
+    }
+    // tornar receber/pagar aliases para transacoes
+    m['receber'] = m['receber'] || m['transacoes'];
+    m['pagar'] = m['pagar'] || m['transacoes'];
+    // adicionar ordens_servico alias se existir configuração similar
+    if (!m['ordens_servico'] && m['agendamentos']) {
+        m['ordens_servico'] = { table: m['agendamentos'].table, dateCol: m['agendamentos'].dateCol, labelCols: m['agendamentos'].labelCols };
+        m['ordens-servico'] = m['ordens_servico'];
+    }
+    return m;
+})();
+
+function normalizeModuleName(name) {
+    if (!name) return null;
+    const n = String(name).toLowerCase().trim();
+    if (cleanupModuleMap[n]) return n;
+    const alt = n.replace(/\s+/g, '_').replace(/-/g, '_').replace(/ç/g,'c');
+    if (cleanupModuleMap[alt]) return alt;
+    // keyword based mapping for human-readable labels
+    if (n.includes('ordem') || n.includes('os') || n.includes('servico') || n.includes('serviço')) return 'ordens_servico';
+    if (n.includes('orcament')) return 'orcamentos';
+    if (n.includes('cliente')) return 'clientes';
+    if (n.includes('agend')) return 'agendamentos';
+    if (n.includes('receber') || n.includes('receb')) return 'receber';
+    if (n.includes('pagar')) return 'pagar';
+    if (n.includes('transac') || n.includes('transa')) return 'transacoes';
+    // try singular/plural variations
+    if (cleanupModuleMap[n + 's']) return n + 's';
+    return null;
+}
+
+
+app.post('/api/cleanup/list-records', (req, res) => {
+    const { module, fromDate, toDate } = req.body || {};
+
+    // Auth admin
+    const cookieHeader = req.headers.cookie || '';
+    const cookieToken = (cookieHeader.match(/(?:^|; )admin_token=([^;]+)/) || [])[1];
+
+    if (!cookieToken || !adminTokens.has(cookieToken)) {
+        return res.status(403).json({ error: 'Acesso negado' });
+    }
+
+    // Validar módulo (aceitar nomes humanizados via normalizeModuleName)
+    const modKey = normalizeModuleName(module) || module;
+    const config = CLEANUP_MODULES[modKey];
+    if (!config) {
+        return res.status(400).json({ error: 'Módulo inválido' });
+    }
+
+    const { table, dateField, columns } = config;
+
+    // Montar colunas com alias
+    const selectColumns = [
+        'id',
+        `${dateField} AS data`,
+        ...columns.map(c => `${c.name} AS ${c.alias}`)
+    ].join(', ');
+
+    // Where
+    let where = '';
+    let params = [];
+
+    if (fromDate && toDate) {
+        where = `WHERE ${dateField} BETWEEN ? AND ?`;
+        params = [fromDate, toDate];
+    } else if (toDate) {
+        where = `WHERE ${dateField} <= ?`;
+        params = [toDate];
+    }
+
+    const sql = `
+        SELECT ${selectColumns}
+        FROM ${table}
+        ${where}
+        ORDER BY ${dateField} DESC
+        LIMIT 100
+    `;
+
+    db.all(sql, params, (err, rows) => {
+        if (err) {
+            console.error('Cleanup list error:', err);
+            return res.status(500).json({ error: 'Erro ao listar registros' });
+        }
+
+        res.json({
+            module: modKey,
+            records: rows || []
+        });
+    });
+});
+
+app.post('/api/cleanup/delete-records', (req, res) => {
+    const { module, ids, recordIds, confirm } = req.body || {};
+
+    // Autenticação: aceitar cookie admin_token ou header x-admin-password
+    const cookieHeader = req.headers.cookie || '';
+    const cookieToken = (cookieHeader.match(/(?:^|; )admin_token=([^;]+)/) || [])[1];
+    const adminPassEnv = process.env.ADMIN_PASSWORD;
+    const providedPass = req.headers['x-admin-password'];
+    let authorized = false;
+    if (adminPassEnv && providedPass && providedPass === adminPassEnv) authorized = true;
+    if (cookieToken && adminTokens.has(cookieToken)) authorized = true;
+    if (!authorized) {
+        return res.status(403).json({ error: 'Acesso negado. Apenas administradores podem deletar registros.' });
+    }
+
+    // aceitar tanto `ids` quanto `recordIds` enviados pelo frontend
+    const idsArr = Array.isArray(ids) ? ids : Array.isArray(recordIds) ? recordIds : null;
+
+    const modKey = normalizeModuleName(module);
+    if (!modKey) {
+        return res.status(400).json({ error: 'Módulo inválido' });
+    }
+    const cfg = cleanupModuleMap[modKey];
+    if (!cfg) {
+        return res.status(400).json({ error: 'Módulo não suportado para limpeza' });
+    }
+
+    if (!idsArr || idsArr.length === 0) {
+        return res.status(400).json({ error: 'IDs obrigatórios' });
+    }
+
+    // exigir confirmação explícita: true ou string 'DELETE'
+    const confirmed = confirm === true || (typeof confirm === 'string' && confirm.toUpperCase() === 'DELETE');
+    if (!confirmed) {
+        return res.status(400).json({ error: 'Confirmação obrigatória. Envie { confirm: true } ou confirm: "DELETE"' });
+    }
+
+    const table = cfg.table;
+    const placeholders = idsArr.map(() => '?').join(',');
+    const selectSql = `SELECT * FROM ${table} WHERE id IN (${placeholders})`;
+
+    db.all(selectSql, idsArr, (err, rows) => {
+        if (err) {
+            console.error('Erro cleanup select for delete:', err);
+            res.status(500).json({ error: err.message });
+            return;
+        }
+
+        // salvar backup
+        try {
+            const fs = require('fs');
+            const path = require('path');
+            const backupsDir = path.join(__dirname, 'backups');
+            if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir);
+            const ts = new Date().toISOString().replace(/[:.]/g,'-');
+            const fname = path.join(backupsDir, `${table}-backup-${ts}.json`);
+            fs.writeFileSync(fname, JSON.stringify({ module: modKey, ids: idsArr, rows, created_at: new Date().toISOString() }, null, 2));
+        } catch (e) {
+            console.warn('Falha ao escrever backup:', e);
+        }
+        const deleteSql = `DELETE FROM ${table} WHERE id IN (${placeholders})`;
+        db.run(deleteSql, idsArr, function(err2) {
+            if (err2) {
+                console.error('Erro cleanup delete:', err2);
+                res.status(500).json({ error: err2.message });
+                return;
+            }
+            res.json({ deleted: this.changes || 0, backupRows: rows.length });
+        });
+    });
+});
+
+// Sistema de persistência em JSON como cache
+const dataFilePath = path.join(__dirname, 'data.json');
+
+function loadData() {
+    try {
+        if (fs.existsSync(dataFilePath)) {
+            const data = fs.readFileSync(dataFilePath, 'utf8');
+            return JSON.parse(data);
+        }
+    } catch (err) {
+        console.error('Erro ao carregar data.json:', err.message);
+    }
+    return { receber: [], pagar: [], lastId: 0 };
+}
+
+function saveData(data) {
+    try {
+        fs.writeFileSync(dataFilePath, JSON.stringify(data, null, 2), 'utf8');
+        console.log('Dados salvos em data.json');
+    } catch (err) {
+        console.error('Erro ao salvar data.json:', err.message);
+    }
+}
+
+// Helper para normalizar campos de um registro financeiro antes de enviar ao cliente
+function normalizeFinanceiroRow(row) {
+    const out = { ...row };
+    try {
+        // Normalizar valor (converter strings formatadas em número)
+        if (out.valor !== undefined && out.valor !== null) {
+            if (typeof out.valor === 'string') {
+                let s = out.valor.trim();
+                s = s.replace(/\s/g, '');
+                s = s.replace(/R\$|r\$/g, '');
+                if (s.indexOf('.') !== -1 && s.indexOf(',') !== -1) {
+                    s = s.replace(/\./g, '');
+                    s = s.replace(/,/g, '.');
+                } else {
+                    if (s.indexOf(',') !== -1) s = s.replace(/,/g, '.');
+                }
+                s = s.replace(/[^0-9.-]/g, '');
+                const n = Number(s);
+                if (!Number.isNaN(n)) out.valor = n;
+            } else {
+                out.valor = Number(out.valor);
+            }
+        }
+
+        // Normalizar vencimento (aceitar dd/mm/yyyy)
+        if (out.vencimento) {
+            const v = String(out.vencimento).trim();
+            const dmY = /^\s*(\d{2})\/(\d{2})\/(\d{4})\s*$/;
+            if (dmY.test(v)) {
+                const m = v.match(dmY);
+                out.vencimento = `${m[3]}-${m[2]}-${m[1]}`;
+            } else {
+                const d = new Date(v);
+                if (!Number.isNaN(d.getTime())) out.vencimento = d.toISOString().split('T')[0];
+            }
+        }
+    } catch (e) {
+        // se falhar, retorna row sem alterações
+        return row;
+    }
+    return out;
+}
+
+// Endpoints para dados financeiros (receber/pagar)
+// GET all financial data
+app.get('/api/financeiro', (req, res) => {
+    db.all(`SELECT 
+        id, descricao, tipo, valor, data, status, orcamento_id, cliente_id, 
+        numero_parcela, total_parcelas, forma_pagamento, vencimento, data_pagamento,
+        observacoes, created_at
+    FROM transacoes 
+    WHERE tipo IN ('receber', 'pagar') 
+    ORDER BY data DESC`, [], (err, rows) => {
+        if (err) {
+            console.warn('Erro ao buscar do SQLite, tentando data.json:', err.message);
+            // Fallback para data.json
+            const data = loadData();
+            const merged = [
+                ...data.receber.map(r => ({ ...r, tipo: 'receber' })),
+                ...data.pagar.map(p => ({ ...p, tipo: 'pagar' }))
+            ];
+            res.json(merged);
+            return;
+        }
+        
+        // Converter IDs para string e normalizar valores/vencimentos
+        const dados = rows.map(row => {
+            const mapped = {
+                ...row,
+                id: String(row.id),
+                orcamentoId: row.orcamento_id,
+                clienteId: row.cliente_id,
+                formaPagamento: row.forma_pagamento,
+                dataPagamento: row.data_pagamento
+            };
+            return normalizeFinanceiroRow(mapped);
+        });
+        
+        res.json(dados);
+    });
+});
+
+// GET financial data by type (receber/pagar)
+app.get('/api/financeiro/:tipo', (req, res) => {
+    const tipo = req.params.tipo;
+    if (!['receber', 'pagar'].includes(tipo)) {
+        res.status(400).json({ error: 'Tipo deve ser "receber" ou "pagar"' });
+        return;
+    }
+    
+    db.all(`SELECT 
+        id, descricao, tipo, valor, data, status, orcamento_id, cliente_id, 
+        numero_parcela, total_parcelas, forma_pagamento, vencimento, data_pagamento,
+        observacoes, created_at
+    FROM transacoes 
+    WHERE tipo = ? 
+    ORDER BY vencimento DESC`, [tipo], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        const dados = rows.map(row => ({
+            id: row.id ? String(row.id) : null,
+            descricao: row.descricao,
+            tipo: row.tipo,
+            valor: row.valor,
+            data: row.data,
+            status: row.status,
+            orcamentoId: row.orcamento_id,
+            clienteId: row.cliente_id,
+            numeroParcela: row.numero_parcela,
+            totalParcelas: row.total_parcelas,
+            formaPagamento: row.forma_pagamento,
+            vencimento: row.vencimento,
+            dataPagamento: row.data_pagamento,
+            observacoes: row.observacoes,
+            createdAt: row.created_at
+        }));
+        res.json(dados);
+    });
+});
+
+// GET financial entries (receber e pagar)
+app.get('/api/financeiro', (req, res) => {
+    db.all(`SELECT 
+        id,
+        tipo,
+        valor,
+        descricao,
+        status,
+        data,
+        vencimento,
+        orcamento_id as orcamentoId,
+        cliente_id as clienteId,
+        observacoes,
+        forma_pagamento as formaPagamento,
+        data_pagamento as dataPagamento,
+        criado_em as criadoEm
+        FROM transacoes 
+        WHERE tipo IN ('receber', 'pagar')
+        ORDER BY vencimento DESC, id DESC`, [], (err, rows) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        const dados = rows.map(row => normalizeFinanceiroRow({ ...row, id: row.id ? String(row.id) : null }));
+        res.json(dados);
+    });
+});
+
+// POST save financial entry
+app.post('/api/financeiro', (req, res) => {
+    const entrada = req.body;
+    // Log do corpo recebido para depuração
+    console.log('POST /api/financeiro recebido:', JSON.stringify(entrada));
+    // Normalizar campos comuns para aceitar formatos como "100,00" e datas em "dd/mm/yyyy"
+    try {
+        // Normalizar tipo
+        if (entrada && entrada.tipo) {
+            entrada.tipo = String(entrada.tipo).toLowerCase();
+        }
+
+        // Normalizar valor: aceitar strings com vírgula, símbolos (R$), e separadores de milhares
+        if (entrada && entrada.valor !== undefined && entrada.valor !== null) {
+            if (typeof entrada.valor === 'string') {
+                let s = String(entrada.valor).trim();
+                // Remover símbolo de moeda e espaços
+                s = s.replace(/\s/g, '');
+                s = s.replace(/R\$|r\$/g, '');
+                // Se tiver tanto '.' quanto ',' assumimos que '.' é separador de milhares e ',' decimal
+                if (s.indexOf('.') !== -1 && s.indexOf(',') !== -1) {
+                    s = s.replace(/\./g, ''); // remover milhares
+                    s = s.replace(/,/g, '.'); // tornar decimal
+                } else {
+                    // Se houver apenas vírgula, trocar por ponto
+                    if (s.indexOf(',') !== -1) s = s.replace(/,/g, '.');
+                    // se houver apenas pontos, mantemos (assume ponto decimal)
+                }
+                // Remover quaisquer caracteres restantes que não sejam dígitos ou ponto/menos
+                s = s.replace(/[^0-9.-]/g, '');
+                const num = Number(s);
+                if (!Number.isNaN(num)) entrada.valor = num;
+            } else {
+                // já número
+                entrada.valor = Number(entrada.valor);
+            }
+        }
+
+        // Normalizar vencimento: aceitar dd/mm/yyyy ou yyyy-mm-dd
+        if (entrada && entrada.vencimento) {
+            const v = String(entrada.vencimento).trim();
+            // formato dd/mm/yyyy
+            const dmY = /^\s*(\d{2})\/(\d{2})\/(\d{4})\s*$/;
+            if (dmY.test(v)) {
+                const m = v.match(dmY);
+                entrada.vencimento = `${m[3]}-${m[2]}-${m[1]}`;
+            } else {
+                // tentar converter data ISO ou outras representações
+                const d = new Date(v);
+                if (!Number.isNaN(d.getTime())) {
+                    entrada.vencimento = d.toISOString().split('T')[0];
+                }
+            }
+        }
+    } catch (normErr) {
+        console.warn('Erro ao normalizar entrada /api/financeiro:', normErr.message);
+    }
+    
+    if (!entrada.tipo || !['receber', 'pagar'].includes(entrada.tipo)) {
+        res.status(400).json({ error: 'Tipo deve ser "receber" ou "pagar"' });
+        return;
+    }
+    if (!entrada.valor || entrada.valor <= 0) {
+        res.status(400).json({ error: 'Valor deve ser maior que zero' });
+        return;
+    }
+    if (!entrada.vencimento) {
+        res.status(400).json({ error: 'Vencimento é obrigatório' });
+        return;
+    }
+
+    // Verificar duplicação: apenas uma entrada por orcamento_id
+    if (entrada.orcamentoId) {
+        db.get(`SELECT id FROM transacoes WHERE orcamento_id = ? AND tipo = ? AND status IN ('aberto', 'atrasado')`,
+            [entrada.orcamentoId, entrada.tipo],
+            (err, row) => {
+                if (err) {
+                    res.status(500).json({ error: err.message });
+                    return;
+                }
+                if (row) {
+                    res.status(409).json({ error: `Já existe um ${entrada.tipo} aberto para este orçamento` });
+                    return;
+                }
+                inserirEntrada();
+            }
+        );
+    } else {
+        inserirEntrada();
+    }
+
+    function inserirEntrada() {
+        const sql = `INSERT INTO transacoes (
+            tipo, valor, descricao, status, data, vencimento, 
+            orcamento_id, cliente_id, observacoes, forma_pagamento, criado_em
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+        const params = [
+            entrada.tipo,
+            entrada.valor,
+            entrada.descricao || '',
+            entrada.status || 'aberto',
+            entrada.data || new Date().toISOString().split('T')[0],
+            entrada.vencimento,
+            entrada.orcamentoId || null,
+            entrada.clienteId || null,
+            entrada.observacoes || '',
+            entrada.formaPagamento || '',
+            new Date().toISOString()
+        ];
+
+        db.run(sql, params, function(err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            
+            const id = String(this.lastID);
+            const novoRegistro = { 
+                id,
+                ...entrada,
+                createdAt: new Date().toISOString()
+            };
+            
+            // Também salvar em data.json como cache
+            const data = loadData();
+            if (entrada.tipo === 'receber') {
+                data.receber.unshift(novoRegistro);
+            } else if (entrada.tipo === 'pagar') {
+                data.pagar.unshift(novoRegistro);
+            }
+            data.lastId = Math.max(data.lastId, parseInt(id));
+            saveData(data);
+            
+            res.status(201).json({ 
+                id,
+                ...entrada,
+                id
+            });
+        });
+    }
+});
+
+// PUT update financial entry
+app.put('/api/financeiro/:id', (req, res) => {
+    const id = parseInt(req.params.id);
+    const entrada = req.body;
+
+    const sql = `UPDATE transacoes SET 
+        status = ?,
+        descricao = ?,
+        observacoes = ?,
+        data_pagamento = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`;
+
+    const params = [
+        entrada.status || 'aberto',
+        entrada.descricao || '',
+        entrada.observacoes || '',
+        entrada.dataPagamento || null,
+        id
+    ];
+
+    db.run(sql, params, function(err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        if (this.changes === 0) {
+            res.status(404).json({ error: 'Registro não encontrado' });
+            return;
+        }
+        res.json({ id: String(id), ...entrada });
+    });
+});
+
+// DELETE financial entry
+app.delete('/api/financeiro/:id', (req, res) => {
+    const id = parseInt(req.params.id);
+
+    db.run('DELETE FROM transacoes WHERE id = ?', [id], function(err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        if (this.changes === 0) {
+            res.status(404).json({ error: 'Registro não encontrado' });
+            return;
+        }
+        res.json({ success: true });
     });
 });
 

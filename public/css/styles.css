@@ -1,0 +1,42 @@
+/* Estilos específicos para filtros do módulo financeiro */
+.filters .form-row { display: flex; gap: 12px; align-items: center; flex-wrap: nowrap; overflow-x: auto; }
+.filters .form-group { display: flex; flex-direction: column; margin: 0; }
+.filters .form-group.filter-small { width: 120px; min-width: 120px; }
+.filters .form-group.filter-small input,
+.filters .form-group.filter-small select { width: 100%; }
+
+/* Campos menores e aparência moderna */
+.filters input[type="text"],
+.filters select {
+	padding: 8px 10px;
+	border: 1px solid #d0d7de;
+	border-radius: 8px;
+	background: #fff;
+	box-shadow: 0 1px 2px rgba(16,24,40,0.03), inset 0 -1px 0 rgba(0,0,0,0.02);
+	font-size: 13px;
+	transition: box-shadow .15s ease, border-color .15s ease, transform .06s ease;
+}
+
+.filters input[type="text"]::placeholder { color: #9aa4b2; }
+
+
+.filters input[type="text"]:focus,
+.filters select:focus {
+	outline: none;
+	border-color: #6aa0ff;
+	box-shadow: 0 6px 18px rgba(58,123,255,0.08);
+	transform: translateY(-1px);
+}
+
+.filters .filter-btn { padding: 8px 12px; height: 38px; }
+
+/* Responsividade: encolher em telas pequenas */
+@media (max-width: 720px) {
+	.filters .form-row { gap: 8px; }
+	.filters .form-group.filter-small { width: 48%; }
+	.filters .filter-btn { width: 100%; }
+}
+
+/* Pequena melhoria visual para select */
+.filters select { appearance: none; -webkit-appearance: none; background-image: linear-gradient(45deg, transparent 50%, #999 50%), linear-gradient(135deg, #999 50%, transparent 50%); background-position: calc(100% - 16px) calc(1em + 2px), calc(100% - 11px) calc(1em + 2px); background-size: 6px 6px, 6px 6px; background-repeat: no-repeat; padding-right: 34px; }
+

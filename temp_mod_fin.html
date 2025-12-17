@@ -810,7 +810,6 @@
             cursor: pointer;
         }
     </style>
-    <!-- Air Datepicker CSS removed (month selector not used) -->
 </head>
 <body>
     <!-- Sidebar -->
@@ -962,11 +961,10 @@
 
             <div class="filters mb-20">
                 <div class="form-row">
-                    <div class="form-group filter-small">
+                    <div class="form-group">
                         <input type="text" id="filter-cliente" placeholder="Filtrar por cliente...">
                     </div>
-                    <!-- campo de mês removido -->
-                    <div class="form-group filter-small">
+                    <div class="form-group">
                         <select id="filter-status-receber" onchange="filtrarReceber()">
                             <option value="">Todos os status</option>
                             <option value="aberto">Aberto</option>
@@ -980,6 +978,9 @@
                             <i class="fas fa-trash-alt"></i> Limpar registros antigos
                         </button>
                     </div>
+                    <button class="btn btn-secondary" onclick="filtrarReceber()">
+                        <i class="fas fa-filter"></i> Filtrar
+                    </button>
                 </div>
             </div>
 
@@ -1058,9 +1059,7 @@
                         <label>Status</label>
                         <select id="rel-status">
                             <option value="todos">Todos</option>
-                            <option value="aberto">Aberto
-                                
-                            </option>
+                            <option value="aberto">Aberto</option>
                             <option value="pago">Pago</option>
                             <option value="atrasado">Atrasado</option>
                             <option value="parcelado">Parcelado</option>
@@ -1087,11 +1086,8 @@
             <div class="tab-content" id="rel-inadimplencia">
                 <!-- Conteúdo similar para inadimplência -->
             </div>
-                </div>
-
-                <!-- Calendário financeiro removido -->
-
-        </main>
+        </div>
+    </main>
 
     <!-- Modal Limpeza Financeiro -->
     <div id="modal-cleanup-financeiro" class="modal">
@@ -1933,10 +1929,8 @@
                 const nomeCliente = (cliente && cliente.nome) ? cliente.nome.split(' ')[0] : (duplicata.cliente || 'Cliente');
                 const venc = duplicata.vencimento ? this.formatarDataBR(duplicata.vencimento) : '---';
                 const valor = duplicata.valor != null ? Number(duplicata.valor).toFixed(2) : '0.00';
-                const statusOrc = (duplicata.status === 'pago') ? 'pago' : 'em aberto';
 
-                const numeroOrc = duplicata.numeroDuplicata || duplicata.numero_duplicata || duplicata.numero || 0;
-                return `${saudacao}, ${nomeCliente}! Tudo bem?\nAqui é da Oficina Mecânica Nego Car.\nPassando para informar sobre a duplicata referente a: Orçamento ${numeroOrc}, que se encontra em ${statusOrc}, em nosso sistema\n\n📌 Parcela: ${duplicata.parcela || ''}\n📅 Vencimento: ${venc}\n💰 Valor: R$ ${valor}\n\nSe já realizou o pagamento, por favor nos avise.\n\nObrigado!`;
+                return `${saudacao}, ${nomeCliente}! Tudo bem?\nAqui é da Oficina Mecânica Nego Car.\nPassando para confirmar o recebimento referente a: ${duplicata.descricao}.\n\n📌 Parcela: ${duplicata.parcela || ''}\n📅 Vencimento: ${venc}\n💰 Valor: R$ ${valor}\n\nSe já realizou o pagamento, por favor nos avise.\n\nObrigado!`;
             }
 
             // Gera link web (wa.me) — usado apenas como fallback ou visualização
@@ -1952,13 +1946,6 @@
                 const msg = encodeURIComponent(mensagem);
                 // Formato: whatsapp://send?phone=55{tel}&text={msg}
                 return `whatsapp://send?phone=55${tel}&text=${msg}`;
-            }
-
-            // Compatibilidade: método único para gerar link (usado pela UI)
-            // Atualmente delega para o link web (wa.me). Se desejar priorizar
-            // abertura no aplicativo nativo, altere para `this.gerarLinkApp`.
-            gerarLink(telefone, mensagem) {
-                return this.gerarLinkWeb(telefone, mensagem);
             }
 
             // Tenta abrir o WhatsApp instalado via URI scheme. Não abre web.whatsapp.com.
@@ -2083,8 +2070,25 @@
 
             async init() {
                 await this.db.init();
-                await this.migrarClientesFinanceiro();
+                // Atualiza status persistente antes de carregar telas
+                await this.atualizarStatusVencimentosPersistente();
+                this.carregarDadosDashboard();
                 this.carregarReceber();
+                this.carregarPagar();
+                this.verificarVencimentos();
+                // Gráfico removido
+
+                // Verificar vencimentos periodicamente e atualizar status persistente
+                setInterval(() => {
+                    this.verificarVencimentos();
+                    this.atualizarStatusVencimentosPersistente();
+                }, 300000); // 5 minutos
+                
+                // Atualizar dados quando localStorage mudar (sincronização com index.html)
+                window.addEventListener('storage', () => {
+                    this.carregarDadosDashboard();
+                    this.carregarReceber();
+                });
             }
 
             // Dados vêm do index.html via localStorage, não precisa criar exemplos
@@ -2278,35 +2282,25 @@
                 const tabela = document.getElementById('tabela-receber');
                 let html = '';
                 
-                const clientes = this.db.getAllSync('clientes');
-
-                // helpers locais
-                const formatarData = (d) => this.formatarData(d);
-                const renderizarStatus = (s) => this.criarBadgeStatus(s);
-                const renderizarAcoes = (it) => `
-                        <button class="btn btn-success btn-sm" onclick="ui.marcarComoPago('${it.id}')">
-                            <i class="fas fa-check"></i>
-                        </button>
-                        <button class="btn btn-whatsapp btn-sm" onclick="ui.enviarWhatsAppDuplicata('${it.id}')">
-                            <i class="fab fa-whatsapp"></i>
-                        </button>
-                    `;
-
                 receber.forEach(item => {
-                    const nomeCliente = item.cliente || clientes.find(c => String(c.id) === String(item.clienteId))?.nome || '—';
-
-                    const tr = document.createElement('tr');
-                    tr.innerHTML = `
-                        <td>${nomeCliente}</td>
-                        <td>${item.descricao || ''}</td>
-                        <td>${item.parcela || ''}</td>
-                        <td>R$ ${Number(item.valor || 0).toFixed(2)}</td>
-                        <td>${formatarData(item.vencimento)}</td>
-                        <td>${renderizarStatus(item.status)}</td>
-                        <td>${renderizarAcoes(item)}</td>
+                    html += `
+                        <tr>
+                            <td>${item.cliente}</td>
+                            <td>${item.descricao}</td>
+                            <td>${item.parcela || '1/1'}</td>
+                            <td>R$ ${item.valor.toFixed(2)}</td>
+                            <td>${this.formatarData(item.vencimento)}</td>
+                            <td>${this.criarBadgeStatus(item.status)}</td>
+                            <td>
+                                <button class="btn btn-success btn-sm" onclick="ui.marcarComoPago('${item.id}')">
+                                    <i class="fas fa-check"></i>
+                                </button>
+                                <button class="btn btn-whatsapp btn-sm" onclick="ui.enviarWhatsAppDuplicata('${item.id}')">
+                                    <i class="fab fa-whatsapp"></i>
+                                </button>
+                            </td>
+                        </tr>
                     `;
-
-                    html += tr.outerHTML;
                 });
                 
                 tabela.innerHTML = html || '<tr><td colspan="7" class="text-center">Nenhuma conta a receber</td></tr>';
@@ -2821,113 +2815,13 @@
                 this.calcularParcelas();
             }
 
-            gerarParcelasParaSalvar() {
-                if (!this.orcamentoAtual || !this.clienteSelecionado) return [];
-                
-                const tipoPagamento = document.getElementById('tipo-pagamento').value;
-                const observacoes = document.getElementById('observacoes').value;
-                const valorTotal = this.orcamentoAtual.valorTotal;
-                
-                const parcelas = [];
-                
-                if (tipoPagamento === 'parcelado') {
-                    const numParcelas = parseInt(document.getElementById('numero-parcelas').value);
-                    const dataPrimeira = document.getElementById('data-primeira-parcela').value;
-                    const valorParcela = valorTotal / numParcelas;
-                    
-                    for (let i = 1; i <= numParcelas; i++) {
-                        const dataVencimento = new Date(dataPrimeira);
-                        dataVencimento.setMonth(dataVencimento.getMonth() + (i - 1));
-                        
-                        parcelas.push({
-                            clienteId: this.clienteSelecionado.id,
-                            cliente: this.clienteSelecionado.nome,
-                            orcamentoId: this.orcamentoAtual.id,
-                            descricao: `Orçamento ${this.orcamentoAtual.numero} - Parcela ${i}/${numParcelas}`,
-                            valor: valorParcela,
-                            vencimento: dataVencimento.toISOString().split('T')[0],
-                            status: 'aberto',
-                            data: new Date().toISOString().split('T')[0],
-                            parcela: `${i}/${numParcelas}`,
-                            tipo: 'parcelado',
-                            observacoes: observacoes || ''
-                        });
-                    }
-                    
-                } else if (tipoPagamento === 'entrada') {
-                    const valorEntrada = parseFloat(document.getElementById('valor-entrada').value) || 0;
-                    const numParcelas = parseInt(document.getElementById('numero-parcelas-entrada').value) || 1;
-                    const dataPrimeira = document.getElementById('data-primeira-parcela-entrada').value;
-                    const valorRestante = valorTotal - valorEntrada;
-                    const valorParcela = numParcelas > 0 ? valorRestante / numParcelas : 0;
-                    
-                    // Entrada
-                    if (valorEntrada > 0) {
-                        parcelas.push({
-                            clienteId: this.clienteSelecionado.id,
-                            cliente: this.clienteSelecionado.nome,
-                            orcamentoId: this.orcamentoAtual.id,
-                            descricao: `Orçamento ${this.orcamentoAtual.numero} - Entrada`,
-                            valor: valorEntrada,
-                            vencimento: new Date().toISOString().split('T')[0],
-                            status: 'pago',
-                            data: new Date().toISOString().split('T')[0],
-                            dataPagamento: new Date().toISOString().split('T')[0],
-                            parcela: 'Entrada',
-                            tipo: 'entrada',
-                            observacoes: observacoes || ''
-                        });
-                    }
-                    
-                    // Parcelas restantes
-                    if (numParcelas > 0 && valorRestante > 0) {
-                        for (let i = 1; i <= numParcelas; i++) {
-                            const dataVencimento = new Date(dataPrimeira);
-                            dataVencimento.setMonth(dataVencimento.getMonth() + (i - 1));
-                            
-                            parcelas.push({
-                                clienteId: this.clienteSelecionado.id,
-                                cliente: this.clienteSelecionado.nome,
-                                orcamentoId: this.orcamentoAtual.id,
-                                descricao: `Orçamento ${this.orcamentoAtual.numero} - Parcela ${i}/${numParcelas}`,
-                                valor: valorParcela,
-                                vencimento: dataVencimento.toISOString().split('T')[0],
-                                status: 'aberto',
-                                data: new Date().toISOString().split('T')[0],
-                                parcela: `${i}/${numParcelas}`,
-                                tipo: 'parcelado',
-                                observacoes: observacoes || ''
-                            });
-                        }
-                    }
-                    
-                } else if (tipoPagamento === 'avista') {
-                    // À vista
-                    parcelas.push({
-                        clienteId: this.clienteSelecionado.id,
-                        cliente: this.clienteSelecionado.nome,
-                        orcamentoId: this.orcamentoAtual.id,
-                        descricao: `Orçamento ${this.orcamentoAtual.numero}`,
-                        valor: valorTotal,
-                        vencimento: new Date().toISOString().split('T')[0],
-                        status: 'pago',
-                        data: new Date().toISOString().split('T')[0],
-                        dataPagamento: new Date().toISOString().split('T')[0],
-                        parcela: '1/1',
-                        tipo: 'avista',
-                        observacoes: observacoes || ''
-                    });
-                }
-                
-                return parcelas;
-            }
-
             async salvarRecebimento() {
                 try {
                     // Bloquear novo lançamento se já existir lançamento para o mesmo orçamento
                     if (this.orcamentoAtual) {
                         const recebimentosExistentes = await this.db.getAll('receber');
                         const existeParaOrcamento = recebimentosExistentes.some(r => {
+                            // Normalizar comparando como strings para evitar problemas de tipo
                             return String(r.orcamentoId) === String(this.orcamentoAtual.id);
                         });
 
@@ -2941,73 +2835,177 @@
                         showToast('Selecione cliente e orçamento', 'warning');
                         return;
                     }
+                    
+                    const tipoPagamento = document.getElementById('tipo-pagamento').value;
+                    const observacoes = document.getElementById('observacoes').value;
+                    
+                    if (tipoPagamento === 'avista') {
+                        // À vista
+                            const duplicata = {
+                                id: await this.db.gerarId(),
+                                clienteId: this.clienteSelecionado.id,
+                                cliente: this.clienteSelecionado.nome,
+                                orcamentoId: this.orcamentoAtual.id,
+                                descricao: `Orçamento ${this.orcamentoAtual.numero}`,
+                                valor: this.orcamentoAtual.valorTotal,
+                                vencimento: new Date().toISOString().split('T')[0],
+                                status: 'pago',
+                                dataPagamento: new Date().toISOString().split('T')[0],
+                                parcela: '1/1',
+                                tipo: 'avista',
+                                observacoes: observacoes
+                            };
+                        
+                        await this.db.add('receber', duplicata);
 
-                    const cliente = this.clienteSelecionado;
-                    if (!cliente) {
-                        showToast('Selecione um cliente válido', 'warning');
-                        return;
-                    }
-                    
-                    // GERAR PARCELAS
-                    const parcelas = this.gerarParcelasParaSalvar();
-                    
-                    if (!parcelas || parcelas.length === 0) {
-                        showToast('Nenhuma parcela gerada. Verifique os dados!', 'warning');
-                        return;
-                    }
-                    
-                    // SALVAR CADA PARCELA NO BANCO
-                    const parcelasSalvas = [];
-                    
-                    for (const parcela of parcelas) {
-                        // Gerar ID único para cada parcela
-                        parcela.id = await this.db.gerarId();
-                        
-                        // SALVAR NO BANCO DE DADOS
-                        await this.db.add('receber', parcela);
-                        parcelasSalvas.push(parcela);
-                        
-                        console.log(`Parcela salva: ${parcela.parcela} - R$ ${parcela.valor} - ${parcela.vencimento}`);
-                    }
-                    
-                    console.log(`Total de parcelas salvas: ${parcelasSalvas.length}`);
-                    
-                    // WhatsApp: Enviar mensagem com o plano de pagamento
-                    try {
-                        const clienteTel = cliente.telefone || cliente.whatsapp;
-                        if (clienteTel && parcelasSalvas.length > 0) {
-                            let msg = `Olá ${cliente.nome.split(' ')[0]}, segue o plano de pagamento para o orçamento ${this.orcamentoAtual.numero}:\n\n`;
-                            
-                            parcelasSalvas.forEach(p => {
-                                const venc = p.vencimento ? this.whatsappManager.formatarDataBR(p.vencimento) : '-';
-                                const status = p.status === 'pago' ? '(PAGO)' : '(A PAGAR)';
-                                msg += `• ${p.parcela} - Venc: ${venc} - Valor: R$ ${Number(p.valor).toFixed(2)} ${status}\n`;
-                            });
-                            
-                            const total = parcelasSalvas.reduce((sum, p) => sum + (p.valor || 0), 0);
-                            msg += `\nTotal: R$ ${total.toFixed(2)}\n`;
-                            msg += '\nQualquer dúvida, estamos à disposição.';
-                            
-                            this.whatsappManager.openInApp(clienteTel, msg);
-                        }
-                    } catch (err) {
-                        console.warn('Erro ao abrir WhatsApp:', err);
-                    }
-                    
-                    // Se houve entrada paga, mostrar recibo
-                    const entradaPaga = parcelasSalvas.find(p => p.status === 'pago');
-                    if (entradaPaga) {
+                        // Abrir recibo imprimível e permitir envio via WhatsApp (app)
                         try {
-                            this.whatsappManager.abrirReciboImprimivel(cliente, entradaPaga);
+                            this.whatsappManager.abrirReciboImprimivel(this.clienteSelecionado, duplicata);
                         } catch (err) {
-                            console.warn('Erro ao abrir recibo:', err);
+                            console.warn('Erro ao abrir recibo/WhatsApp:', err);
+                        }
+                        
+                    } else if (tipoPagamento === 'parcelado') {
+                        // Parcelado
+                        const numParcelas = parseInt(document.getElementById('numero-parcelas').value);
+                        const dataPrimeira = document.getElementById('data-primeira-parcela').value;
+                        const valorParcela = this.orcamentoAtual.valorTotal / numParcelas;
+                        const parcelasCriadas = [];
+                        
+                        for (let i = 1; i <= numParcelas; i++) {
+                            const dataVencimento = new Date(dataPrimeira);
+                            dataVencimento.setMonth(dataVencimento.getMonth() + (i - 1));
+                            
+                            const duplicata = {
+                                id: await this.db.gerarId(),
+                                clienteId: this.clienteSelecionado.id,
+                                cliente: this.clienteSelecionado.nome,
+                                orcamentoId: this.orcamentoAtual.id,
+                                descricao: `Orçamento ${this.orcamentoAtual.numero}`,
+                                valor: valorParcela,
+                                vencimento: dataVencimento.toISOString().split('T')[0],
+                                status: 'aberto',
+                                parcela: `${i}/${numParcelas}`,
+                                tipo: 'parcelado',
+                                observacoes: observacoes
+                            };
+                            
+                            
+                            await this.db.add('receber', duplicata);
+                            parcelasCriadas.push(duplicata);
+                        }
+
+                        // Enviar mensagem via WhatsApp (app) com o plano de parcelamento
+                        try {
+                            const clienteTel = this.clienteSelecionado && this.clienteSelecionado.telefone ? this.clienteSelecionado.telefone : '';
+                            if (clienteTel && parcelasCriadas.length) {
+                                let msg = `Olá ${this.clienteSelecionado.nome.split(' ')[0]}, segue o plano de pagamento para o orçamento ${this.orcamentoAtual.numero}:\n`;
+                                parcelasCriadas.forEach(p => {
+                                    const venc = p.vencimento ? this.whatsappManager.formatarDataBR(p.vencimento) : '-';
+                                    msg += `Parcela ${p.parcela} - Venc: ${venc} - Valor: R$ ${Number(p.valor).toFixed(2)}\n`;
+                                });
+                                msg += '\nQualquer dúvida, estamos à disposição.';
+                                this.whatsappManager.openInApp(clienteTel, msg);
+                            }
+                        } catch (err) {
+                            console.warn('Erro ao abrir WhatsApp para parcelado:', err);
+                        }
+                    } else if (tipoPagamento === 'entrada') {
+                        // Entrada + Parcelas
+                        const valorEntrada = parseFloat(document.getElementById('valor-entrada').value) || 0;
+                        const numParcelas = parseInt(document.getElementById('numero-parcelas-entrada').value) || 1;
+                        const dataPrimeira = document.getElementById('data-primeira-parcela-entrada').value;
+                        
+                        if (!valorEntrada || valorEntrada <= 0) {
+                            showToast('Informe o valor da entrada!', 'warning');
+                            return;
+                        }
+                        
+                        if (!dataPrimeira) {
+                            showToast('Informe a data da primeira parcela!', 'warning');
+                            return;
+                        }
+                        
+                        const valorRestante = this.orcamentoAtual.valorTotal - valorEntrada;
+                        
+                        if (valorRestante < 0) {
+                            showToast('O valor da entrada não pode ser maior que o valor total!', 'error');
+                            return;
+                        }
+                        
+                        const valorParcela = numParcelas > 0 ? valorRestante / numParcelas : 0;
+                        const parcelasCriadas = [];
+                        
+                        // Entrada
+                        if (valorEntrada > 0) {
+                            const duplicataEntrada = {
+                                id: await this.db.gerarId(),
+                                clienteId: this.clienteSelecionado.id,
+                                cliente: this.clienteSelecionado.nome,
+                                orcamentoId: this.orcamentoAtual.id,
+                                descricao: `Orçamento ${this.orcamentoAtual.numero} - Entrada`,
+                                valor: valorEntrada,
+                                vencimento: new Date().toISOString().split('T')[0],
+                                status: 'pago',
+                                dataPagamento: new Date().toISOString().split('T')[0],
+                                parcela: 'Entrada',
+                                tipo: 'entrada',
+                                observacoes: observacoes
+                            };
+                            
+                            await this.db.add('receber', duplicataEntrada);
+
+                            // Abrir recibo imprimível para a entrada
+                            try {
+                                this.whatsappManager.abrirReciboImprimivel(this.clienteSelecionado, duplicataEntrada);
+                            } catch (err) {
+                                console.warn('Erro ao abrir recibo da entrada:', err);
+                            }
+                        }
+                        
+                        // Parcelas
+                        if (numParcelas > 0 && valorRestante > 0) {
+                            for (let i = 1; i <= numParcelas; i++) {
+                                const dataVencimento = new Date(dataPrimeira);
+                                dataVencimento.setMonth(dataVencimento.getMonth() + (i - 1));
+                                
+                                const duplicata = {
+                                    id: await this.db.gerarId(),
+                                    clienteId: this.clienteSelecionado.id,
+                                    cliente: this.clienteSelecionado.nome,
+                                    orcamentoId: this.orcamentoAtual.id,
+                                    descricao: `Orçamento ${this.orcamentoAtual.numero}`,
+                                    valor: valorParcela,
+                                    vencimento: dataVencimento.toISOString().split('T')[0],
+                                    status: 'aberto',
+                                    parcela: `${i}/${numParcelas}`,
+                                    tipo: 'parcelado',
+                                    observacoes: observacoes
+                                };
+                                
+                                await this.db.add('receber', duplicata);
+                                parcelasCriadas.push(duplicata);
+                            }
+                            // Enviar mensagem com o plano de parcelas (após criar todas)
+                            try {
+                                const clienteTel = this.clienteSelecionado && this.clienteSelecionado.telefone ? this.clienteSelecionado.telefone : '';
+                                if (clienteTel && parcelasCriadas.length) {
+                                    let msg = `Olá ${this.clienteSelecionado.nome.split(' ')[0]}, segue o plano de pagamento para o orçamento ${this.orcamentoAtual.numero}:\n`;
+                                    parcelasCriadas.forEach(p => {
+                                        const venc = p.vencimento ? this.whatsappManager.formatarDataBR(p.vencimento) : '-';
+                                        msg += `Parcela ${p.parcela} - Venc: ${venc} - Valor: R$ ${Number(p.valor).toFixed(2)}\n`;
+                                    });
+                                    msg += '\nQualquer dúvida, estamos à disposição.';
+                                    this.whatsappManager.openInApp(clienteTel, msg);
+                                }
+                            } catch (err) {
+                                console.warn('Erro ao abrir WhatsApp para plano de entrada+parcelas:', err);
+                            }
                         }
                     }
                     
-                    showToast(`Recebimento salvo com sucesso! ${parcelasSalvas.length} parcela(s) criada(s).`, 'success');
+                    showToast('Recebimento salvo com sucesso!', 'success');
                     hideModal('modal-lancamento-receber');
-                    
-                    // Atualizar a interface
                     this.carregarReceber();
                     this.carregarDadosDashboard();
                     
@@ -3016,7 +3014,7 @@
                     
                 } catch (error) {
                     console.error('Erro ao salvar recebimento:', error);
-                    showToast('Erro ao salvar recebimento: ' + (error && error.message ? error.message : error), 'error');
+                    showToast('Erro ao salvar recebimento', 'error');
                 }
             }
 
@@ -3175,24 +3173,6 @@
 
         // Inicializar quando o DOM carregar
         document.addEventListener('DOMContentLoaded', async () => {
-            console.log('=== INICIANDO SISTEMA FINANCEIRO ===');
-            
-            // Verificar dados no localStorage
-            try {
-                const receberNoStorage = localStorage.getItem('financeiro-receber');
-                if (receberNoStorage) {
-                    const receber = JSON.parse(receberNoStorage);
-                    console.log(`Total de registros "receber" no localStorage: ${receber.length}`);
-                    if (receber.length > 0) {
-                        console.log('Últimos 5 registros:', receber.slice(-5));
-                    }
-                }
-            } catch (err) {
-                console.warn('Erro ao ler financeiro-receber do localStorage:', err);
-            }
-
-            // Garantir que o botão de limpeza esteja oculto por padrão (apenas admin poderá mostrar)
-            try { const _c = document.getElementById('cleanup-btn-container'); if (_c) _c.style.display = 'none'; } catch (e) {}
             await ui.init();
             
             // Configurar eventos
@@ -3249,7 +3229,6 @@
             // Filtro automático: aplicar ao digitar/alterar sem necessidade de clicar
             const filterClienteEl = document.getElementById('filter-cliente');
             const filterStatusEl = document.getElementById('filter-status-receber');
-
             if (filterClienteEl) {
                 let debounceTimerFilter;
                 filterClienteEl.addEventListener('input', () => {
@@ -3265,7 +3244,7 @@
         });
 
         // Funções de UI
-        async function showSection(sectionId) {
+        function showSection(sectionId) {
             // Esconder todas as seções
             document.querySelectorAll('.dashboard').forEach(el => {
                 el.classList.add('hidden');
@@ -3283,15 +3262,13 @@
             
             // Atualizar dados da seção
             if (sectionId === 'dashboard') {
-                await ui.carregarDadosDashboard();
-                // ATUALIZAR STATUS DOS VENCIMENTOS
-                try { await ui.atualizarStatusVencimentosPersistente(); } catch (e) { console.warn('Erro ao atualizar status de vencimentos:', e); }
+                ui.carregarDadosDashboard();
             } else if (sectionId === 'receber') {
-                await ui.carregarReceber();
+                ui.carregarReceber();
                 // Aplicar filtro automaticamente ao abrir a seção de receber
                 try { filtrarReceber(); } catch (e) { /* ignora se função não existir */ }
             } else if (sectionId === 'pagar') {
-                await ui.carregarPagar();
+                ui.carregarPagar();
             }
         }
 
@@ -3518,115 +3495,50 @@
 
         async function filtrarReceber() {
             try {
-                const clienteFiltro = (document.getElementById('filter-cliente').value || '').trim().toLowerCase();
-                const statusFiltroRaw = (document.getElementById('filter-status-receber').value || '').trim();
-                const statusFiltro = statusFiltroRaw ? statusFiltroRaw.toLowerCase() : '';
+                const clienteFiltro = document.getElementById('filter-cliente').value.trim().toLowerCase();
+                const statusFiltro = document.getElementById('filter-status-receber').value;
 
                 const receber = await ui.db.getAll('receber');
 
                 const hoje = new Date();
 
-                const parseDate = (val) => {
-                    if (!val && val !== 0) return null;
-                    // Se for número (timestamp em ms ou s)
-                    if (typeof val === 'number' || String(val).match(/^\d{10,13}$/)) {
-                        const n = Number(val);
-                        // se em segundos, converter para ms
-                        const ms = n < 1e12 ? n * 1000 : n;
-                        const dnum = new Date(ms);
-                        if (!isNaN(dnum.getTime())) return dnum;
-                    }
-                    // tenta ISO/compatível
-                    let d = new Date(val);
-                    if (!isNaN(d.getTime())) return d;
-                    // tenta dd/mm/yyyy
-                    const m = String(val).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-                    if (m) return new Date(`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`);
-                    return null;
-                };
-
-                const isParceladoItem = (item) => {
-                    if (!item) return false;
-                    if (item.parcelado === true || item.parcelado === 'true' || item.parcelado === 1 || item.parcelado === '1') return true;
-                    const tipo = (item.tipo || item.forma || '').toString().toLowerCase();
-                    if (tipo === 'parcelado') return true;
-                    const parcela = (item.parcela || item.parcela_de || item.numero_parcela || '');
-                    const pstr = parcela.toString();
-                    if (pstr && pstr.indexOf('/') !== -1) {
-                        const parts = pstr.split('/').map(s => s.trim());
-                        if (parts.length === 2 && parts[0] !== parts[1]) return true;
-                    }
-                    if ((Number(item.numParcelas) || Number(item.total_parcelas) || Number(item.totalParcelas) || 0) > 1) return true;
-                    return false;
-                };
-
-                const getStatus = (item) => {
-                    if (!item) return '';
-                    let st = (item.status || item.situacao || item.estado || '') + '';
-                    if (!st) {
-                        // flags alternativos
-                        if (item.pago === true || item.pago === 'true' || item.confirmado === 1 || item.confirmado === '1' || item.confirmadoEm || item.confirmado_em) st = 'pago';
-                        if (item.aberto === true || item.aberto === 'true') st = st || 'aberto';
-                    }
-                    return st.toLowerCase();
-                };
-
-                const getClienteNome = (item) => {
-                    return ((item.cliente || item.clienteNome || item.nome || item.cliente_nome || '') + '').toLowerCase();
-                };
-
-                // Leitura dos filtros de data (intervalo Início/Fim)
-                const inicioFiltroRaw = (document.getElementById('filter-data-inicio') && document.getElementById('filter-data-inicio').value) || '';
-                const fimFiltroRaw = (document.getElementById('filter-data-fim') && document.getElementById('filter-data-fim').value) || '';
-
-                let inicioFiltroDate = inicioFiltroRaw ? new Date(inicioFiltroRaw) : null;
-                let fimFiltroDate = fimFiltroRaw ? new Date(fimFiltroRaw) : null;
-                if (fimFiltroDate) { fimFiltroDate.setHours(23,59,59,999); }
-
                 const filtrados = receber.filter(item => {
-                    // Filtrar por status
-                    if (statusFiltro) {
+                    // Filtrar por status especial 'atrasado' calculado a partir da data de vencimento
+                        if (statusFiltro && statusFiltro !== '') {
                         if (statusFiltro === 'parcelado') {
-                            if (!isParceladoItem(item)) return false;
+                            // Filtrar parcelas: considerar como parcelado quando houver parcela > 1/1
+                            // ou quando existir propriedade parcelado = true ou tipo === 'parcelado'
+                            const isParcelado = (item) => {
+                                if (item.parcelado === true) return true;
+                                if ((item.tipo || '').toLowerCase() === 'parcelado') return true;
+                                const parcela = item.parcela || '';
+                                if (parcela && parcela !== '1/1') return true;
+                                return false;
+                            };
+                            if (!isParcelado(item)) return false;
                         } else if (statusFiltro === 'atrasado') {
-                            const venc = parseDate(item.vencimento || item.data || item.created_at || item.criado_em);
-                            if (!venc) return false;
-                            const hojeZero = new Date(hoje.toISOString().split('T')[0] + 'T00:00:00');
-                            if (!(venc < hojeZero)) return false;
-                            if (getStatus(item) === 'pago') return false;
+                            // Considera atrasado quando vencimento existe e é anterior a hoje e não está pago
+                            if (!item.vencimento) return false;
+                            const venc = new Date(item.vencimento + 'T00:00:00');
+                            if (!(venc < new Date(hoje.toISOString().split('T')[0] + 'T00:00:00'))) return false;
+                            if ((item.status || '').toLowerCase() === 'pago') return false;
                         } else if (statusFiltro === 'aberto') {
-                            // aceitar 'aberto' ou 'pendente' como abertos
-                            const st = getStatus(item);
-                            if (!(st === 'aberto' || st === 'pendente' || st === 'em aberto')) return false;
-                            const venc = parseDate(item.vencimento || item.data);
-                            if (venc) {
-                                const hojeZero = new Date(hoje.toISOString().split('T')[0] + 'T00:00:00');
-                                if (venc < hojeZero) return false;
+                            // Aberto -> status explicitamente 'aberto' and vencimento today or future
+                            if ((item.status || '').toLowerCase() !== 'aberto') return false;
+                            if (item.vencimento) {
+                                const venc = new Date(item.vencimento + 'T00:00:00');
+                                if (venc < new Date(hoje.toISOString().split('T')[0] + 'T00:00:00')) return false;
                             }
                         } else {
-                            // comparação flexível: aceita se o status contiver o filtro ou vice-versa
-                            const st = getStatus(item);
-                            if (!st) return false;
-                            if (st !== statusFiltro && !st.includes(statusFiltro) && !statusFiltro.includes(st)) return false;
+                            // Outros status (ex: pago) -> comparar diretamente
+                            if ((item.status || '').toLowerCase() !== statusFiltro.toLowerCase()) return false;
                         }
                     }
 
                     // Filtrar por nome do cliente se informado
-                    if (clienteFiltro) {
-                        const nomeCliente = getClienteNome(item);
-                        if (!nomeCliente || !nomeCliente.includes(clienteFiltro)) return false;
-                    }
-
-                    // Filtrar por intervalo de datas (vencimento)
-                    if (inicioFiltroDate || fimFiltroDate) {
-                        const venc = parseDate(item.vencimento || item.data || item.created_at || item.criado_em);
-                        // Filtro por intervalo (data início/fim): incluir itens sem data também
-                        if (venc) {
-                            if (inicioFiltroDate && venc < inicioFiltroDate) return false;
-                            if (fimFiltroDate && venc > fimFiltroDate) return false;
-                        } else {
-                            // sem data: manter
-                        }
+                    if (clienteFiltro && clienteFiltro !== '') {
+                        const nomeCliente = (item.cliente || '').toString().toLowerCase();
+                        if (!nomeCliente.includes(clienteFiltro)) return false;
                     }
 
                     return true;
@@ -3710,72 +3622,25 @@
 
                 const clientes = await ui.db.getAll('clientes');
 
-                const parseDate = (val) => {
-                    if (!val && val !== 0) return null;
-                    if (typeof val === 'number' || String(val).match(/^\d{10,13}$/)) {
-                        const n = Number(val);
-                        const ms = n < 1e12 ? n * 1000 : n;
-                        const dnum = new Date(ms);
-                        if (!isNaN(dnum.getTime())) return dnum;
-                    }
-                    let d = new Date(val);
-                    if (!isNaN(d.getTime())) return d;
-                    const m = String(val).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-                    if (m) return new Date(`${m[3]}-${m[2].padStart(2,'0')}-${m[1].padStart(2,'0')}`);
-                    return null;
-                };
-
-                const isParceladoItem = (item) => {
-                    if (!item) return false;
-                    if (item.parcelado === true || item.parcelado === 'true' || item.parcelado === 1 || item.parcelado === '1') return true;
-                    const tipo = (item.tipo || item.forma || '').toString().toLowerCase();
-                    if (tipo === 'parcelado') return true;
-                    const parcela = (item.parcela || item.parcela_de || item.numero_parcela || '');
-                    const pstr = parcela.toString();
-                    if (pstr && pstr.indexOf('/') !== -1) {
-                        const parts = pstr.split('/').map(s => s.trim());
-                        if (parts.length === 2 && parts[0] !== parts[1]) return true;
-                    }
-                    if ((Number(item.numParcelas) || Number(item.total_parcelas) || Number(item.totalParcelas) || 0) > 1) return true;
-                    return false;
-                };
-
-                const getStatus = (item) => {
-                    if (!item) return '';
-                    let st = (item.status || item.situacao || item.estado || '') + '';
-                    if (!st) {
-                        if (item.pago === true || item.pago === 'true' || item.confirmado === 1 || item.confirmado === '1' || item.confirmadoEm || item.confirmado_em) st = 'pago';
-                        if (item.aberto === true || item.aberto === 'true') st = st || 'aberto';
-                    }
-                    return st.toLowerCase();
-                };
-
                 const filtrados = items.filter(item => {
-                    if (status && status.toLowerCase() !== 'todos') {
-                        const st = getStatus(item);
-                        const s = status.toLowerCase();
-                        if (s === 'parcelado') {
-                            if (!isParceladoItem(item)) return false;
-                        } else if (s === 'atrasado') {
-                            const venc = parseDate(item.vencimento || item.data || item.created_at || item.criado_em);
-                            if (!venc) return false;
-                            const hojeZero = new Date(new Date().toISOString().split('T')[0] + 'T00:00:00');
-                            if (!(venc < hojeZero)) return false;
-                            if (st === 'pago') return false;
-                        } else if (s === 'aberto') {
-                            if (!(st === 'aberto' || st === 'pendente' || st === 'em aberto')) return false;
+                    // Filtrar por status
+                    if (status && status !== 'todos') {
+                        if (status === 'parcelado') {
+                            // aceitar parcelado como flag (1/true) ou campo 'parcelado'
+                            const isParcelado = item.parcelado === 1 || item.parcelado === true || String(item.parcelado) === '1';
+                            if (!isParcelado) return false;
                         } else {
-                            if (!st) return false;
-                            if (st !== s && !st.includes(s) && !s.includes(st)) return false;
+                            // tratar 'atrasado' como status persistente já atualizado
+                            if ((item.status || '').toLowerCase() !== status.toLowerCase()) return false;
                         }
                     }
 
+                    // Filtrar por data (vencimento)
                     if (inicioISO || fimISO) {
-                        const venc = (item.vencimento ? (item.vencimento.split ? item.vencimento.split('T')[0] : item.vencimento) : null) || null;
-                        const vencDate = venc ? parseDate(venc) : null;
-                        if (!vencDate) return false;
-                        if (inicioISO && vencDate.toISOString().split('T')[0] < inicioISO) return false;
-                        if (fimISO && vencDate.toISOString().split('T')[0] > fimISO) return false;
+                        const venc = item.vencimento ? (item.vencimento.split ? item.vencimento.split('T')[0] : item.vencimento) : null;
+                        if (!venc) return false;
+                        if (inicioISO && venc < inicioISO) return false;
+                        if (fimISO && venc > fimISO) return false;
                     }
 
                     return true;
@@ -3885,9 +3750,5 @@
         // Inicializar sync status
         syncManager.updateStatus();
     </script>
-        <!-- Air Datepicker JS removed (month selector not used) -->
-
-
-
 </body>
 </html>
