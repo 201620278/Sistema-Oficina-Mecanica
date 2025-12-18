@@ -713,26 +713,51 @@
                         body.vencimento = body.data || new Date().toISOString().split('T')[0];
                     }
                     
-                    if (navigator.onLine) {
-                        try {
-                            const response = await fetch(endpoint, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify(body)
-                            });
+                    // Capturar id local antes do POST para possibilitar substituição posterior
+                    const originalLocalId = data.id ? String(data.id) : null;
 
-                            if (response.ok) {
-                                const resultado = await response.json();
-                                if (resultado && resultado.id) data.id = String(resultado.id);
-                                console.log(`${store} salvo no servidor com ID: ${data.id}`);
-                            } else if (response.status === 409) {
-                                const erro = await response.json();
-                                throw new Error(erro.error || 'Conflito 409');
-                            } else {
-                                console.warn('Erro ao salvar no servidor, salvando localmente');
+                    // Sempre tentar enviar ao servidor local primeiro (servidor local pode estar acessível mesmo sem conexao à internet).
+                    try {
+                        const response = await fetch(endpoint, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(body)
+                        });
+
+                        if (response.ok) {
+                            const resultado = await response.json();
+                            if (resultado && resultado.id) {
+                                const serverId = String(resultado.id);
+                                data.id = serverId;
+                                // Se o id local anterior for diferente do id do servidor, substituir localmente
+                                if (originalLocalId && originalLocalId !== serverId) {
+                                    try {
+                                        await this.replaceIdAcrossStores(originalLocalId, serverId);
+                                        console.log(`Substituído id local ${originalLocalId} por id do servidor ${serverId} em storage`);
+                                    } catch (repErr) {
+                                        console.warn('Erro ao substituir ids locais após POST:', repErr);
+                                    }
+                                }
                             }
-                        } catch (error) {
-                            console.warn(`Erro ao sincronizar ${store}:`, error);
+                            console.log(`${store} salvo no servidor com ID: ${data.id}`);
+                        } else if (response.status === 409) {
+                            const erro = await response.json();
+                            throw new Error(erro.error || 'Conflito 409');
+                        } else {
+                            console.warn('Erro ao salvar no servidor (status não-ok), enfileirando para retry');
+                            try {
+                                this.enqueueSync(store, body, originalLocalId || data.id);
+                            } catch (e) {
+                                console.warn('Falha ao enfileirar item após erro de POST:', e);
+                            }
+                        }
+                    } catch (error) {
+                        // Falha de rede ao tentar alcançar o servidor local — enfileirar para retry
+                        console.warn(`Erro ao sincronizar ${store} (fetch falhou):`, error);
+                        try {
+                            this.enqueueSync(store, body, originalLocalId || data.id);
+                        } catch (e) {
+                            console.warn('Falha ao enfileirar item após exception de POST:', e);
                         }
                     }
                 }
@@ -742,6 +767,120 @@
                 items.push(data);
                 localStorage.setItem(key, JSON.stringify(items));
                 return Promise.resolve(data.id);
+            }
+
+            // Substitui ocorrências do id antigo pelo novo em todos os storageKeys
+            async replaceIdAcrossStores(oldId, newId) {
+                if (!oldId || !newId) return Promise.resolve();
+                try {
+                    const keys = Object.values(this.storageKeys);
+
+                    const replaceInObject = (obj) => {
+                        if (!obj || typeof obj !== 'object') return false;
+                        let changed = false;
+                        const walk = (value, parent, key) => {
+                            if (value === null || value === undefined) return;
+                            if (typeof value === 'string' || typeof value === 'number') {
+                                if (String(value) === String(oldId)) {
+                                    parent[key] = String(newId);
+                                    changed = true;
+                                }
+                                return;
+                            }
+                            if (Array.isArray(value)) {
+                                for (let i = 0; i < value.length; i++) {
+                                    walk(value[i], value, i);
+                                }
+                                return;
+                            }
+                            if (typeof value === 'object') {
+                                Object.keys(value).forEach(k => walk(value[k], value, k));
+                                return;
+                            }
+                        };
+                        Object.keys(obj).forEach(k => walk(obj[k], obj, k));
+                        return changed;
+                    };
+
+                    for (const k of keys) {
+                        try {
+                            const raw = localStorage.getItem(k);
+                            if (!raw) continue;
+                            let arr = JSON.parse(raw);
+                            let changedAny = false;
+                            if (Array.isArray(arr)) {
+                                for (let i = 0; i < arr.length; i++) {
+                                    const it = arr[i];
+                                    const changed = replaceInObject(it);
+                                    if (changed) changedAny = true;
+                                }
+                            } else if (typeof arr === 'object') {
+                                if (replaceInObject(arr)) changedAny = true;
+                            }
+                            if (changedAny) {
+                                localStorage.setItem(k, JSON.stringify(arr));
+                            }
+                        } catch (e) {
+                            // ignorar erros de parsing em keys que não sejam arrays
+                        }
+                    }
+                } catch (e) {
+                    console.warn('replaceIdAcrossStores falhou:', e);
+                }
+                return Promise.resolve();
+            }
+
+            // --- Sync Queue helpers ---
+            _getSyncQueue() {
+                try {
+                    const raw = localStorage.getItem(this.storageKeys.syncQueue);
+                    if (!raw) return [];
+                    return JSON.parse(raw);
+                } catch (e) {
+                    return [];
+                }
+            }
+
+            _setSyncQueue(arr) {
+                try {
+                    localStorage.setItem(this.storageKeys.syncQueue, JSON.stringify(arr || []));
+                } catch (e) {
+                    console.warn('Falha ao salvar syncQueue:', e);
+                }
+            }
+
+            enqueueSync(store, item, originalLocalId = null) {
+                try {
+                    const queue = this._getSyncQueue();
+                    const qItem = {
+                        id: (Date.now()).toString() + Math.random().toString(36).substr(2,6),
+                        store,
+                        item,
+                        originalLocalId: originalLocalId ? String(originalLocalId) : (item && item.id ? String(item.id) : null),
+                        attempts: 0,
+                        createdAt: new Date().toISOString(),
+                        lastAttemptAt: null
+                    };
+                    queue.push(qItem);
+                    this._setSyncQueue(queue);
+                    console.log('Enfileirado para sync:', qItem.id, store, qItem.originalLocalId);
+                    return qItem.id;
+                } catch (e) {
+                    console.warn('Falha ao enfileirar sync:', e);
+                    return null;
+                }
+            }
+
+            removeFromSyncQueueById(queueId) {
+                try {
+                    let queue = this._getSyncQueue();
+                    const before = queue.length;
+                    queue = queue.filter(q => String(q.id) !== String(queueId));
+                    this._setSyncQueue(queue);
+                    console.log(`SyncQueue: removido ${queueId} (${before} → ${queue.length})`);
+                } catch (e) {
+                    console.warn('Falha ao remover item da syncQueue:', e);
+                }
             }
 
             async put(store, data) {
@@ -828,27 +967,73 @@
             async delete(store, key) {
                 // Se for receber ou pagar, sincronizar com servidor
                 if ((store === 'receber' || store === 'pagar') && key) {
-                    const endpoint = `/api/financeiro/${key}`;
+                    // Heurística para detectar se é ID do servidor ou ID local:
+                    // IDs do servidor (SQLite AUTOINCREMENT): 1-7 dígitos (até ~9 milhões)
+                    // IDs locais (Date.now + rand): 14+ dígitos ou contém caracteres não-dígitos
+                    const keyStr = String(key);
+                    const onlyDigits = /^\d+$/.test(keyStr);
+                    const isServerLike = onlyDigits && keyStr.length <= 7;
                     
-                    if (navigator.onLine) {
-                        try {
-                            const response = await fetch(endpoint, { method: 'DELETE' });
-                            if (response.ok) {
-                                console.log(`${store} deletado do servidor com ID: ${key}`);
-                            } else {
-                                console.warn('Erro ao deletar do servidor, deletando localmente');
+                    console.log(`[DELETE] store=${store}, key=${keyStr}, onlyDigits=${onlyDigits}, length=${keyStr.length}, isServerLike=${isServerLike}`);
+                    
+                    if (!isServerLike) {
+                        console.warn(`[DELETE] ID '${keyStr}' detectado como ID local (não sincronizado com servidor); deletando apenas localmente`);
+                    } else {
+                        const endpoint = `/api/financeiro/${keyStr}`;
+                        if (navigator.onLine) {
+                            try {
+                                console.log(`[DELETE] Chamando DELETE remoto para ${endpoint}`);
+                                const response = await fetch(endpoint, { method: 'DELETE' });
+                                if (response.ok) {
+                                    try {
+                                        const respJson = await response.json();
+                                        console.log(`[DELETE] Resposta do servidor:`, respJson);
+                                        // servidor pode retornar { tipo, deletedId, removed }
+                                        if (respJson && respJson.tipo) {
+                                            const tipo = String(respJson.tipo).toLowerCase();
+                                            if (tipo === 'receber') {
+                                                // já removido remotamente — garantir remoção local no store correto
+                                                await ui.db.delete('receber', keyStr);
+                                            } else if (tipo === 'pagar') {
+                                                await ui.db.delete('pagar', keyStr);
+                                            } else {
+                                                // tipo desconhecido — limpar em ambos apenas por segurança
+                                                await ui.db.delete('receber', keyStr);
+                                                await ui.db.delete('pagar', keyStr);
+                                            }
+                                        } else if (respJson && respJson.deletedId) {
+                                            // compatibilidade com formato antigo
+                                            await ui.db.delete('receber', respJson.deletedId);
+                                            await ui.db.delete('pagar', respJson.deletedId);
+                                        } else {
+                                            console.log(`${store} deletado do servidor com ID: ${keyStr}`);
+                                        }
+                                    } catch (e) {
+                                        console.log(`${store} deletado do servidor com ID: ${keyStr}`);
+                                    }
+                                } else {
+                                    try {
+                                        const txt = await response.text();
+                                        console.warn(`[DELETE] Erro ${response.status} ao deletar do servidor: ${txt}, deletando localmente`, response.status, txt);
+                                    } catch (e) {
+                                        console.warn(`[DELETE] Erro ${response.status} ao deletar do servidor, deletando localmente`);
+                                    }
+                                }
+                            } catch (error) {
+                                console.warn(`[DELETE] Erro ao sincronizar ${store}:`, error);
                             }
-                        } catch (error) {
-                            console.warn(`Erro ao sincronizar ${store}:`, error);
+                        } else {
+                            console.log(`[DELETE] Offline; deletando apenas localmente`);
                         }
                     }
                 }
                 
-                // Deletar localmente
+                // Deletar localmente (sempre)
                 const items = this.getAllSync(store);
                 const filtered = items.filter(item => String(item.id) !== String(key));
                 const storageKey = this.storageKeys[store];
                 localStorage.setItem(storageKey, JSON.stringify(filtered));
+                console.log(`[DELETE] Removido localmente: ${store} ID ${key} (${items.length} → ${filtered.length} itens)`);
                 return Promise.resolve();
             }
 
@@ -1097,16 +1282,102 @@
                     return;
                 }
 
-                showToast('Sincronizando...', 'info');
+                showToast('Sincronizando fila...', 'info');
                 try {
-                    // Sincronização com servidor
-                    if (navigator.onLine) {
-                        // Forçar recarregamento local a partir do servidor e merge
-                        if (window.ui && window.ui.db && typeof window.ui.db.init === 'function') {
-                            await window.ui.db.init();
+                    if (!window.ui || !window.ui.db) {
+                        console.warn('UI/DB não inicializados para sincronização');
+                        showToast('UI/DB não prontos para sync', 'error');
+                        return;
+                    }
+
+                    const db = window.ui.db;
+                    let qArr = db._getSyncQueue();
+                    if (!qArr || qArr.length === 0) {
+                        // fallback: recarregar dados do servidor
+                        if (typeof db.init === 'function') await db.init();
+                        showToast('Sincronização concluída (nada na fila).', 'success');
+                        return;
+                    }
+
+                    const MAX_ATTEMPTS = 6; // limite de tentativas
+                    for (let i = 0; i < qArr.length; ) {
+                        const q = qArr[i];
+                        try {
+                            // backoff: calcular delay com base em attempts
+                            const attempts = q.attempts || 0;
+                            if (attempts >= MAX_ATTEMPTS) {
+                                console.warn(`Fila: ${q.id} excedeu máximo de tentativas (${attempts}), removendo.`);
+                                qArr.splice(i, 1);
+                                db._setSyncQueue(qArr);
+                                continue; // não incrementar i
+                            }
+
+                            const last = q.lastAttemptAt ? new Date(q.lastAttemptAt).getTime() : 0;
+                            const delayMs = Math.min(Math.pow(2, attempts) * 1000, 5 * 60 * 1000); // cap 5min
+                            if (last && (Date.now() - last) < delayMs) {
+                                // ainda no backoff, pular por enquanto
+                                i++;
+                                continue;
+                            }
+
+                            if (!navigator.onLine) throw new Error('offline');
+                            console.log('Fila: tentando reenviar item:', q.id, q.store, q.originalLocalId, 'attempts=', attempts);
+
+                            // atualizar lastAttemptAt antes de tentar
+                            q.lastAttemptAt = new Date().toISOString();
+                            db._setSyncQueue(qArr);
+
+                            const response = await fetch('/api/financeiro', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify(q.item)
+                            });
+
+                            if (response.ok) {
+                                const resultado = await response.json();
+                                if (resultado && resultado.id) {
+                                    const serverId = String(resultado.id);
+                                    if (q.originalLocalId && q.originalLocalId !== serverId) {
+                                        try {
+                                            await db.replaceIdAcrossStores(q.originalLocalId, serverId);
+                                            console.log(`Fila: substituído ${q.originalLocalId} → ${serverId}`);
+                                        } catch (repErr) {
+                                            console.warn('Fila: erro ao substituir ids:', repErr);
+                                        }
+                                    }
+                                }
+                                // remover do queue
+                                qArr = db._getSyncQueue();
+                                const idxNow = qArr.findIndex(x => String(x.id) === String(q.id));
+                                if (idxNow >= 0) {
+                                    qArr.splice(idxNow, 1);
+                                    db._setSyncQueue(qArr);
+                                }
+                                // don't increment i because qArr updated; reload queue length
+                                qArr = db._getSyncQueue();
+                                continue;
+                            } else {
+                                const parsed = await response.text().catch(() => null);
+                                console.warn('Fila: POST retornou erro', response.status, parsed);
+                                // incrementar attempts
+                                q.attempts = (q.attempts || 0) + 1;
+                                q.lastAttemptAt = new Date().toISOString();
+                                db._setSyncQueue(qArr);
+                                i++;
+                            }
+                        } catch (e) {
+                            console.warn('Fila: erro ao reenviar item:', q.id, e);
+                            // incrementar attempts e atualizar lastAttemptAt
+                            q.attempts = (q.attempts || 0) + 1;
+                            q.lastAttemptAt = new Date().toISOString();
+                            db._setSyncQueue(qArr);
+                            i++;
                         }
                     }
-                    showToast('Sincronização concluída!', 'success');
+
+                    // Ao final, forçar recarregamento do servidor para mesclar
+                    if (typeof db.init === 'function') await db.init();
+                    showToast('Sincronização da fila concluída.', 'success');
                 } catch (err) {
                     console.warn('Erro durante sincronização manual:', err);
                     showToast('Erro durante sincronização', 'error');
@@ -1521,21 +1792,58 @@
                         </button>
                     `;
 
+                // Agrupar por grupoParcelamentoId quando disponível
+                const groups = {};
                 receber.forEach(item => {
-                    const nomeCliente = item.cliente || clientes.find(c => String(c.id) === String(item.clienteId))?.nome || '—';
+                    const key = item.grupoParcelamentoId || item.id;
+                    if (!groups[key]) groups[key] = { id: key, items: [] };
+                    groups[key].items.push(item);
+                });
 
-                    const tr = document.createElement('tr');
-                    tr.innerHTML = `
-                        <td>${nomeCliente}</td>
-                        <td>${item.descricao || ''}</td>
-                        <td>${item.parcela || ''}</td>
-                        <td>R$ ${Number(item.valor || 0).toFixed(2)}</td>
-                        <td>${formatarData(item.vencimento)}</td>
-                        <td>${renderizarStatus(item.status)}</td>
-                        <td>${renderizarAcoes(item)}</td>
-                    `;
+                const groupKeys = Object.keys(groups);
+                groupKeys.forEach(key => {
+                    const group = groups[key];
+                    // calcular resumo do grupo
+                    const totalGroup = group.items.reduce((s, it) => s + Number(it.valor || 0), 0);
+                    const clienteNome = group.items[0].cliente || clientes.find(c => String(c.id) === String(group.items[0].clienteId))?.nome || '—';
+                    const descricaoGrupo = group.items[0].descricao || '';
 
-                    html += tr.outerHTML;
+                    // Cabeçalho do grupo (apenas quando há mais de 1 parcela ou quando veio com grupoParcelamentoId)
+                    if (group.items.length > 1 || group.items[0].grupoParcelamentoId) {
+                        html += `
+                            <tr class="group-header">
+                                <td colspan="7">
+                                    <div style="display:flex;justify-content:space-between;align-items:center">
+                                        <div>
+                                            <strong>${clienteNome}</strong> — ${descricaoGrupo} — ${group.items.length} parcela(s) — ${this.formatarMoeda(totalGroup)}
+                                        </div>
+                                        <div>
+                                            <button class="btn btn-sm" onclick="ui.toggleGrupo('${key}')">Mostrar / Ocultar</button>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        `;
+                    }
+
+                    // Linhas das parcelas (filhas do grupo)
+                    group.items.forEach(item => {
+                        const nomeCliente = item.cliente || clientes.find(c => String(c.id) === String(item.clienteId))?.nome || '—';
+                        const tr = document.createElement('tr');
+                        tr.setAttribute('data-grupo', key);
+                        tr.className = 'group-item';
+                        tr.innerHTML = `
+                            <td>${nomeCliente}</td>
+                            <td>${item.descricao || ''}</td>
+                            <td>${item.parcela || ''}</td>
+                            <td>${this.formatarMoeda(item.valor || 0)}</td>
+                            <td>${formatarData(item.vencimento)}</td>
+                            <td>${renderizarStatus(item.status)}</td>
+                            <td>${renderizarAcoes(item)}</td>
+                        `;
+
+                        html += tr.outerHTML;
+                    });
                 });
                 
                 tabela.innerHTML = html || '<tr><td colspan="7" class="text-center">Nenhuma conta a receber</td></tr>';
@@ -2106,12 +2414,13 @@
                             cliente: this.clienteSelecionado.nome,
                             orcamentoId: this.orcamentoAtual.id,
                             descricao: `Orçamento ${this.orcamentoAtual.numero} - Parcela ${i}/${numParcelas}`,
-                            valor: valorParcela,
+                            valor: Number(valorParcela.toFixed(2)),
                             vencimento: dataVencimento.toISOString().split('T')[0],
                             status: 'aberto',
                             data: new Date().toISOString().split('T')[0],
                             parcela: `${i}/${numParcelas}`,
                             tipo: 'parcelado',
+                            parcelado: true,
                             observacoes: observacoes || ''
                         });
                     }
@@ -2130,13 +2439,14 @@
                             cliente: this.clienteSelecionado.nome,
                             orcamentoId: this.orcamentoAtual.id,
                             descricao: `Orçamento ${this.orcamentoAtual.numero} - Entrada`,
-                            valor: valorEntrada,
+                            valor: Number(valorEntrada.toFixed(2)),
                             vencimento: new Date().toISOString().split('T')[0],
                             status: 'pago',
                             data: new Date().toISOString().split('T')[0],
                             dataPagamento: new Date().toISOString().split('T')[0],
                             parcela: 'Entrada',
                             tipo: 'entrada',
+                            parcelado: true,
                             observacoes: observacoes || ''
                         });
                     }
@@ -2152,12 +2462,13 @@
                                 cliente: this.clienteSelecionado.nome,
                                 orcamentoId: this.orcamentoAtual.id,
                                 descricao: `Orçamento ${this.orcamentoAtual.numero} - Parcela ${i}/${numParcelas}`,
-                                valor: valorParcela,
+                                valor: Number(valorParcela.toFixed(2)),
                                 vencimento: dataVencimento.toISOString().split('T')[0],
                                 status: 'aberto',
                                 data: new Date().toISOString().split('T')[0],
                                 parcela: `${i}/${numParcelas}`,
                                 tipo: 'parcelado',
+                                parcelado: true,
                                 observacoes: observacoes || ''
                             });
                         }
@@ -2170,13 +2481,14 @@
                         cliente: this.clienteSelecionado.nome,
                         orcamentoId: this.orcamentoAtual.id,
                         descricao: `Orçamento ${this.orcamentoAtual.numero}`,
-                        valor: valorTotal,
+                        valor: Number(valorTotal),
                         vencimento: new Date().toISOString().split('T')[0],
                         status: 'pago',
                         data: new Date().toISOString().split('T')[0],
                         dataPagamento: new Date().toISOString().split('T')[0],
                         parcela: '1/1',
                         tipo: 'avista',
+                        parcelado: false,
                         observacoes: observacoes || ''
                     });
                 }
@@ -2220,16 +2532,26 @@
                     
                     // SALVAR CADA PARCELA NO BANCO
                     const parcelasSalvas = [];
+
+                    // Gerar um ID de grupo para vincular todas as parcelas desse parcelamento
+                    const grupoParcelamentoId = await this.db.gerarId();
                     
                     for (const parcela of parcelas) {
+                        // Atribuir grupo de parcelamento para poder reagrupá-las depois
+                        parcela.grupoParcelamentoId = grupoParcelamentoId;
+
                         // Gerar ID único para cada parcela
                         parcela.id = await this.db.gerarId();
                         
                         // SALVAR NO BANCO DE DADOS
-                        await this.db.add('receber', parcela);
+                        const idRetornado = await this.db.add('receber', parcela);
+                        
+                        // Log detalhado para debug
+                        console.log(`[SALVAR RECEBIMENTO] Parcela ID local: ${parcela.id}, ID retornado: ${idRetornado}, syncStatus: ${idRetornado === parcela.id ? 'LOCAL' : 'SINCRONIZADO'}`);
+                        
                         parcelasSalvas.push(parcela);
                         
-                        console.log(`Parcela salva: ${parcela.parcela} - R$ ${parcela.valor} - ${parcela.vencimento}`);
+                        console.log(`Parcela salva: ${parcela.parcela} - R$ ${parcela.valor} - ${parcela.vencimento} (grupo ${grupoParcelamentoId})`);
                     }
                     
                     console.log(`Total de parcelas salvas: ${parcelasSalvas.length}`);
@@ -2328,6 +2650,16 @@
                 document.getElementById('campos-entrada').classList.add('hidden');
                 this.clienteSelecionado = null;
                 this.orcamentoAtual = null;
+            }
+
+            toggleGrupo(grupoId) {
+                try {
+                    const rows = document.querySelectorAll(`[data-grupo='${grupoId}']`);
+                    if (!rows || rows.length === 0) return;
+                    rows.forEach(r => r.classList.toggle('hidden'));
+                } catch (e) {
+                    console.warn('Erro ao alternar grupo:', e);
+                }
             }
 
             async iniciarChart() {
@@ -2461,6 +2793,8 @@
             window.addEventListener('online', () => {
                 syncManager.isOnline = true;
                 syncManager.updateStatus();
+                // tentar sincronizar imediatamente quando o navegador detectar online
+                try { syncManager.trySync(); } catch (e) { console.warn('Erro ao iniciar sync on online event:', e); }
             });
             
             window.addEventListener('offline', () => {
@@ -2481,6 +2815,9 @@
             
             // Configurar data padrão para primeira parcela (30 dias)
             const data30dias = new Date();
+
+            // Tentar sincronizar automaticamente ao iniciar (caso o servidor local esteja disponível)
+            try { syncManager.trySync(); } catch (e) { console.warn('Erro ao iniciar sync on startup:', e); }
             data30dias.setDate(data30dias.getDate() + 30);
             const dataPrimeiraParcela = document.getElementById('data-primeira-parcela');
             if (dataPrimeiraParcela) {
@@ -2743,6 +3080,55 @@
                     // mostrar caminho do backup se disponível
                     if (data.backup) console.info('Backup salvo em:', data.backup);
                     hideModal('modal-cleanup-financeiro');
+                    // Remover também localmente os registros: preferir IDs retornados pelo servidor (mais precisos),
+                    // caso não haja `removedIds`, manter fallback por data.
+                    try {
+                        if (data && Array.isArray(data.removedItems) && data.removedItems.length > 0) {
+                            // removedItems é array de { id, tipo }
+                            for (const it of data.removedItems) {
+                                if (!it || !it.id) continue;
+                                const sid = String(it.id);
+                                const tipo = (it.tipo || '').toLowerCase();
+                                if (tipo === 'receber') {
+                                    await ui.db.delete('receber', sid);
+                                } else if (tipo === 'pagar') {
+                                    await ui.db.delete('pagar', sid);
+                                } else {
+                                    // Tentar ambos stores por segurança
+                                    await ui.db.delete('receber', sid);
+                                    await ui.db.delete('pagar', sid);
+                                }
+                            }
+                        } else if (data && Array.isArray(data.removedIds) && data.removedIds.length > 0) {
+                            // Compatibilidade retroativa: apenas ids
+                            const removedIds = data.removedIds.map(x => String(x));
+                            const todosReceber = await ui.db.getAll('receber');
+                            for (const r of todosReceber) if (r && removedIds.includes(String(r.id))) await ui.db.delete('receber', r.id);
+                            const todosPagar = await ui.db.getAll('pagar');
+                            for (const p of todosPagar) if (p && removedIds.includes(String(p.id))) await ui.db.delete('pagar', p.id);
+                        } else {
+                            // Fallback: remover por data (comportamento anterior)
+                            const before = new Date(beforeDate);
+                            // Receber
+                            const todosReceber = await ui.db.getAll('receber');
+                            for (const r of todosReceber) {
+                                const venc = r.vencimento ? new Date(r.vencimento) : null;
+                                if (venc && venc < before) {
+                                    await ui.db.delete('receber', r.id);
+                                }
+                            }
+                            // Pagar
+                            const todosPagar = await ui.db.getAll('pagar');
+                            for (const p of todosPagar) {
+                                const venc2 = p.vencimento ? new Date(p.vencimento) : null;
+                                if (venc2 && venc2 < before) {
+                                    await ui.db.delete('pagar', p.id);
+                                }
+                            }
+                        }
+                    } catch (localErr) {
+                        console.warn('Erro ao remover registros localmente após cleanup:', localErr);
+                    }
                     // Recarregar tabelas
                     ui.carregarReceber();
                     ui.carregarPagar();

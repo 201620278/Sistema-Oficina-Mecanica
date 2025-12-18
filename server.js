@@ -217,6 +217,7 @@ function inicializarBanco() {
             confirmado_em TEXT,
             criado_em TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            grupo_parcelamento_id TEXT,
             FOREIGN KEY (orcamento_id) REFERENCES orcamentos(id),
             FOREIGN KEY (cliente_id) REFERENCES clientes(id)
         )`);
@@ -238,7 +239,8 @@ function inicializarBanco() {
             'ALTER TABLE transacoes ADD COLUMN confirmado_em TEXT',
             'ALTER TABLE transacoes ADD COLUMN criado_em TEXT',
             'ALTER TABLE transacoes ADD COLUMN vencimento TEXT',
-            'ALTER TABLE transacoes ADD COLUMN data_pagamento TEXT'
+            'ALTER TABLE transacoes ADD COLUMN data_pagamento TEXT',
+            'ALTER TABLE transacoes ADD COLUMN grupo_parcelamento_id TEXT'
         ];
 
         transacaoColumnsToAdd.forEach(sql => {
@@ -591,7 +593,7 @@ app.post('/api/financeiro/cleanup', (req, res) => {
         // Fazer remoção segura por ids
         const ids = rows.map(r => r.id).filter(Boolean);
         if (ids.length === 0) {
-            res.json({ deleted: 0, backup: backupPath });
+            res.json({ deleted: 0, backup: path.relative(__dirname, backupPath), removedItems: [] });
             return;
         }
 
@@ -603,7 +605,8 @@ app.post('/api/financeiro/cleanup', (req, res) => {
                 return;
             }
 
-            res.json({ deleted: this.changes, backup: path.relative(__dirname, backupPath) });
+            const removedItems = rows.map(r => ({ id: r.id ? String(r.id) : null, tipo: r.tipo || null }));
+            res.json({ deleted: this.changes, backup: path.relative(__dirname, backupPath), removedIds: ids, removedItems });
         });
     });
 });
@@ -2239,29 +2242,7 @@ app.post('/api/cleanup/delete-records', (req, res) => {
     });
 });
 
-// Sistema de persistência em JSON como cache
-const dataFilePath = path.join(__dirname, 'data.json');
-
-function loadData() {
-    try {
-        if (fs.existsSync(dataFilePath)) {
-            const data = fs.readFileSync(dataFilePath, 'utf8');
-            return JSON.parse(data);
-        }
-    } catch (err) {
-        console.error('Erro ao carregar data.json:', err.message);
-    }
-    return { receber: [], pagar: [], lastId: 0 };
-}
-
-function saveData(data) {
-    try {
-        fs.writeFileSync(dataFilePath, JSON.stringify(data, null, 2), 'utf8');
-        console.log('Dados salvos em data.json');
-    } catch (err) {
-        console.error('Erro ao salvar data.json:', err.message);
-    }
-}
+// NOTE: Removed data.json dual-persistence. SQLite (`transacoes`) is the single source of truth.
 
 // Helper para normalizar campos de um registro financeiro antes de enviar ao cliente
 function normalizeFinanceiroRow(row) {
@@ -2317,17 +2298,11 @@ app.get('/api/financeiro', (req, res) => {
     WHERE tipo IN ('receber', 'pagar') 
     ORDER BY data DESC`, [], (err, rows) => {
         if (err) {
-            console.warn('Erro ao buscar do SQLite, tentando data.json:', err.message);
-            // Fallback para data.json
-            const data = loadData();
-            const merged = [
-                ...data.receber.map(r => ({ ...r, tipo: 'receber' })),
-                ...data.pagar.map(p => ({ ...p, tipo: 'pagar' }))
-            ];
-            res.json(merged);
+            console.error('Erro ao buscar do SQLite:', err.message);
+            res.status(500).json({ error: 'Erro interno ao buscar registros' });
             return;
         }
-        
+
         // Converter IDs para string e normalizar valores/vencimentos
         const dados = rows.map(row => {
             const mapped = {
@@ -2336,11 +2311,12 @@ app.get('/api/financeiro', (req, res) => {
                 orcamentoId: row.orcamento_id,
                 clienteId: row.cliente_id,
                 formaPagamento: row.forma_pagamento,
-                dataPagamento: row.data_pagamento
+                dataPagamento: row.data_pagamento,
+                grupoParcelamentoId: row.grupo_parcelamento_id
             };
             return normalizeFinanceiroRow(mapped);
         });
-        
+
         res.json(dados);
     });
 });
@@ -2356,7 +2332,7 @@ app.get('/api/financeiro/:tipo', (req, res) => {
     db.all(`SELECT 
         id, descricao, tipo, valor, data, status, orcamento_id, cliente_id, 
         numero_parcela, total_parcelas, forma_pagamento, vencimento, data_pagamento,
-        observacoes, created_at
+        observacoes, created_at, grupo_parcelamento_id
     FROM transacoes 
     WHERE tipo = ? 
     ORDER BY vencimento DESC`, [tipo], (err, rows) => {
@@ -2379,7 +2355,8 @@ app.get('/api/financeiro/:tipo', (req, res) => {
             vencimento: row.vencimento,
             dataPagamento: row.data_pagamento,
             observacoes: row.observacoes,
-            createdAt: row.created_at
+            createdAt: row.created_at,
+            grupoParcelamentoId: row.grupo_parcelamento_id
         }));
         res.json(dados);
     });
@@ -2400,7 +2377,8 @@ app.get('/api/financeiro', (req, res) => {
         observacoes,
         forma_pagamento as formaPagamento,
         data_pagamento as dataPagamento,
-        criado_em as criadoEm
+        criado_em as criadoEm,
+        grupo_parcelamento_id as grupoParcelamentoId
         FROM transacoes 
         WHERE tipo IN ('receber', 'pagar')
         ORDER BY vencimento DESC, id DESC`, [], (err, rows) => {
@@ -2507,8 +2485,8 @@ app.post('/api/financeiro', (req, res) => {
     function inserirEntrada() {
         const sql = `INSERT INTO transacoes (
             tipo, valor, descricao, status, data, vencimento, 
-            orcamento_id, cliente_id, observacoes, forma_pagamento, criado_em
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+            orcamento_id, cliente_id, observacoes, forma_pagamento, criado_em, grupo_parcelamento_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
         const params = [
             entrada.tipo,
@@ -2521,7 +2499,8 @@ app.post('/api/financeiro', (req, res) => {
             entrada.clienteId || null,
             entrada.observacoes || '',
             entrada.formaPagamento || '',
-            new Date().toISOString()
+            new Date().toISOString(),
+            entrada.grupoParcelamentoId || null
         ];
 
         db.run(sql, params, function(err) {
@@ -2537,20 +2516,22 @@ app.post('/api/financeiro', (req, res) => {
                 createdAt: new Date().toISOString()
             };
             
-            // Também salvar em data.json como cache
-            const data = loadData();
-            if (entrada.tipo === 'receber') {
-                data.receber.unshift(novoRegistro);
-            } else if (entrada.tipo === 'pagar') {
-                data.pagar.unshift(novoRegistro);
-            }
-            data.lastId = Math.max(data.lastId, parseInt(id));
-            saveData(data);
-            
-            res.status(201).json({ 
-                id,
-                ...entrada,
-                id
+            // Retornar o registro recém-inserido a partir do banco (fonte da verdade)
+            db.get('SELECT * FROM transacoes WHERE id = ?', [id], (getErr, row) => {
+                if (getErr) {
+                    res.status(201).json({ id, ...entrada });
+                    return;
+                }
+                const mapped = {
+                    ...row,
+                    id: String(row.id),
+                    orcamentoId: row.orcamento_id,
+                    clienteId: row.cliente_id,
+                    formaPagamento: row.forma_pagamento,
+                    dataPagamento: row.data_pagamento,
+                    grupoParcelamentoId: row.grupo_parcelamento_id
+                };
+                res.status(201).json(normalizeFinanceiroRow(mapped));
             });
         });
     }
@@ -2566,6 +2547,7 @@ app.put('/api/financeiro/:id', (req, res) => {
         descricao = ?,
         observacoes = ?,
         data_pagamento = ?,
+        grupo_parcelamento_id = ?,
         updated_at = CURRENT_TIMESTAMP
     WHERE id = ?`;
 
@@ -2574,6 +2556,7 @@ app.put('/api/financeiro/:id', (req, res) => {
         entrada.descricao || '',
         entrada.observacoes || '',
         entrada.dataPagamento || null,
+        entrada.grupoParcelamentoId || null,
         id
     ];
 
@@ -2592,18 +2575,43 @@ app.put('/api/financeiro/:id', (req, res) => {
 
 // DELETE financial entry
 app.delete('/api/financeiro/:id', (req, res) => {
-    const id = parseInt(req.params.id);
+    const receivedId = req.params.id;
+    console.log(`DELETE /api/financeiro/${receivedId} recebido`);
+    // Primeiro buscar o registro para retornar seu tipo/conteúdo
+    db.get('SELECT * FROM transacoes WHERE id = ?', [receivedId], (getErr, row) => {
+        if (getErr) {
+            res.status(500).json({ error: getErr.message, requestedId: receivedId });
+            return;
+        }
+        if (!row) {
+            res.status(404).json({ error: 'Registro não encontrado', requestedId: receivedId });
+            return;
+        }
 
-    db.run('DELETE FROM transacoes WHERE id = ?', [id], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        if (this.changes === 0) {
-            res.status(404).json({ error: 'Registro não encontrado' });
-            return;
-        }
-        res.json({ success: true });
+        // Guardar tipo e dados antes de deletar
+        const tipo = row.tipo || null;
+        const removedMapped = {
+            ...row,
+            id: row.id ? String(row.id) : null,
+            orcamentoId: row.orcamento_id,
+            clienteId: row.cliente_id,
+            formaPagamento: row.forma_pagamento,
+            dataPagamento: row.data_pagamento,
+            grupoParcelamentoId: row.grupo_parcelamento_id
+        };
+
+        db.run('DELETE FROM transacoes WHERE id = ?', [receivedId], function(delErr) {
+            if (delErr) {
+                res.status(500).json({ error: delErr.message, requestedId: receivedId });
+                return;
+            }
+            if (this.changes === 0) {
+                res.status(404).json({ error: 'Registro não encontrado', requestedId: receivedId });
+                return;
+            }
+
+            res.json({ success: true, deletedId: String(receivedId), tipo, removed: normalizeFinanceiroRow(removedMapped) });
+        });
     });
 });
 

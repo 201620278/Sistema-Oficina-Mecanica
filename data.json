@@ -1,6 +1,38 @@
 {
   "receber": [
     {
+      "id": "1766063189264gw75sfzua",
+      "clienteId": 7,
+      "cliente": "Donizete Ferreira Machado",
+      "orcamentoId": 11,
+      "descricao": "Orçamento 2 - Parcela 1/3",
+      "valor": 73.33,
+      "vencimento": "2026-01-17",
+      "status": "aberto",
+      "data": "2025-12-18",
+      "parcela": "1/3",
+      "tipo": "receber",
+      "parcelado": true,
+      "observacoes": "",
+      "grupoParcelamentoId": "1766063189264b0ut64kwu",
+      "createdAt": "2025-12-18T13:06:29.394Z"
+    },
+    {
+      "id": "17660557751962lvuyuaxc",
+      "clienteId": 6,
+      "cliente": "Cicero Diego",
+      "orcamentoId": 10,
+      "descricao": "Orçamento 1 - Parcela 1/4",
+      "valor": 60,
+      "vencimento": "2026-01-17",
+      "status": "aberto",
+      "data": "2025-12-18",
+      "parcela": "1/4",
+      "tipo": "receber",
+      "observacoes": "",
+      "createdAt": "2025-12-18T11:02:55.608Z"
+    },
+    {
       "id": "17659369758683ayw7eysk",
       "clienteId": 7,
       "cliente": "Donizete Ferreira Machado",
@@ -485,5 +517,5 @@
       "createdAt": "2025-12-10T11:57:47.838Z"
     }
   ],
-  "lastId": 1765904617785621
+  "lastId": 1765904617785623
 }
