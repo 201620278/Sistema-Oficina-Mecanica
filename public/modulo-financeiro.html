@@ -492,6 +492,56 @@
         </div>
     </div>
 
+    <!-- Modal Visualizar Duplicata -->
+    <div id="modal-visualizar-duplicata" class="modal">
+        <div class="modal-content" style="max-width:600px">
+            <div class="modal-header">
+                <h3>Visualizar Duplicata</h3>
+                <button class="modal-close" onclick="hideModal('modal-visualizar-duplicata')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Cliente</label>
+                    <div id="vis-dup-cliente" style="font-weight:600"></div>
+                </div>
+                <div class="form-group">
+                    <label>Telefone</label>
+                    <div id="vis-dup-telefone"></div>
+                </div>
+                <div class="form-group">
+                    <label>Descrição</label>
+                    <div id="vis-dup-descricao"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1">
+                        <label>Parcela</label>
+                        <div id="vis-dup-parcela"></div>
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label>Vencimento</label>
+                        <div id="vis-dup-vencimento"></div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1">
+                        <label>Valor</label>
+                        <div id="vis-dup-valor"></div>
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label>Status</label>
+                        <div id="vis-dup-status"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">
+                <button class="btn btn-secondary" onclick="hideModal('modal-visualizar-duplicata')">Fechar</button>
+                <button class="btn btn-whatsapp" onclick="ui.enviarWhatsAppDuplicata(ui.duplicataAtual.id)">Enviar WhatsApp</button>
+                <button class="btn btn-success" onclick="ui.marcarComoPago(ui.duplicataAtual.id)">Marcar como pago</button>
+                <button class="btn btn-primary" onclick="(function(){ try { whatsappManager.abrirReciboImprimivel(ui.clienteAtual, ui.duplicataAtual); } catch(e){ console.warn(e); } })()">Imprimir / Recibo</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal Lançamento Pagar -->
     <div id="modal-lancamento-pagar" class="modal">
         <div class="modal-content">
@@ -1400,6 +1450,38 @@
                 return telefone.replace(/\D/g, '');
             }
 
+            // Retorna o primeiro número de telefone válido encontrado no objeto cliente
+            obterTelefoneCliente(cliente) {
+                if (!cliente || typeof cliente !== 'object') return '';
+                const candidates = [
+                    cliente.telefone,
+                    cliente.whatsapp,
+                    cliente.numero,
+                    cliente.numeroTelefone,
+                    cliente.telefone_celular,
+                    cliente.phone,
+                    cliente.mobile,
+                    cliente.celular
+                ];
+                for (const c of candidates) {
+                    if (c) {
+                        const cleaned = String(c).replace(/\D/g, '');
+                        if (cleaned.length >= 8) return cleaned; // mínimo razoável
+                    }
+                }
+                // também tentar varrer propriedades dinamicamente por chave
+                for (const k of Object.keys(cliente)) {
+                    if (/tel|phone|cel|whats?/i.test(k)) {
+                        const v = cliente[k];
+                        if (v) {
+                            const cleaned = String(v).replace(/\D/g, '');
+                            if (cleaned.length >= 8) return cleaned;
+                        }
+                    }
+                }
+                return '';
+            }
+
             formatarDataBR(dataISO) {
                 if (!dataISO) return '';
                 const [ano, mes, dia] = dataISO.split('-');
@@ -1834,7 +1916,7 @@
                         tr.className = 'group-item';
                         tr.innerHTML = `
                             <td>${nomeCliente}</td>
-                            <td>${item.descricao || ''}</td>
+                            <td><a href="#" onclick="ui.visualizarDuplicata('${item.id}'); return false;">${item.descricao || ''}</a></td>
                             <td>${item.parcela || ''}</td>
                             <td>${this.formatarMoeda(item.valor || 0)}</td>
                             <td>${formatarData(item.vencimento)}</td>
@@ -2031,9 +2113,11 @@
                 
                 // Buscar cliente do localStorage compartilhado
                 const clientes = this.db.getAllSync('clientes');
-                const cliente = clientes.find(c => c.id == duplicata.clienteId);
-                
-                if (!cliente || (!cliente.telefone && !cliente.whatsapp)) {
+                const cliente = clientes.find(c => String(c.id) === String(duplicata.clienteId) || String(c.id) === String(duplicata.cliente_id) || String(c.id) === String(duplicata.cliente)) || null;
+
+                // Tentar extrair telefone robustamente
+                const telefoneEncontrado = this.whatsappManager ? this.whatsappManager.obterTelefoneCliente(cliente) : (cliente && (cliente.telefone || cliente.whatsapp) ? String(cliente.telefone || cliente.whatsapp).replace(/\D/g,'') : '');
+                if (!cliente || !telefoneEncontrado) {
                     showToast('Cliente sem telefone cadastrado', 'warning');
                     return;
                 }
@@ -2043,8 +2127,47 @@
                 
                 const mensagem = this.whatsappManager.gerarMensagem(cliente, duplicata);
                 document.getElementById('mensagem-whatsapp').value = mensagem;
+                // salvar telefone limpo no clienteAtual para uso posterior
+                cliente._telefoneParaWhats = telefoneEncontrado;
                 
                 showModal('modal-whatsapp');
+            }
+
+            async visualizarDuplicata(id) {
+                try {
+                    const duplicata = await this.db.get('receber', id);
+                    if (!duplicata) return;
+
+                    const clientes = this.db.getAllSync('clientes');
+                    const cliente = clientes.find(c => String(c.id) === String(duplicata.clienteId) || String(c.id) === String(duplicata.cliente_id) || String(c.id) === String(duplicata.cliente)) || null;
+
+                    this.duplicataAtual = duplicata;
+                    this.clienteAtual = cliente;
+
+                    // preencher modal de visualização
+                    document.getElementById('vis-dup-cliente').innerText = cliente && cliente.nome ? cliente.nome : (duplicata.cliente || '—');
+                    document.getElementById('vis-dup-telefone').innerText = cliente && (cliente.telefone || cliente.whatsapp) ? (cliente.telefone || cliente.whatsapp) : '';
+                    document.getElementById('vis-dup-descricao').innerText = duplicata.descricao || '';
+                    document.getElementById('vis-dup-parcela').innerText = duplicata.parcela || '';
+                    document.getElementById('vis-dup-vencimento').innerText = this.formatarData(duplicata.vencimento);
+                    document.getElementById('vis-dup-valor').innerText = this.formatarMoeda(Number(duplicata.valor || 0));
+                    document.getElementById('vis-dup-status').innerHTML = this.criarBadgeStatus(duplicata);
+
+                    // preencher mensagem whatsapp no modal de envio (pré-visualização)
+                    try {
+                        const mensagem = whatsappManager.gerarMensagem(cliente, duplicata);
+                        document.getElementById('mensagem-whatsapp').value = mensagem;
+                    } catch (e) {}
+
+                    // armazenar telefone limpo
+                    try {
+                        if (cliente) cliente._telefoneParaWhats = whatsappManager.obterTelefoneCliente(cliente);
+                    } catch (e) {}
+
+                    showModal('modal-visualizar-duplicata');
+                } catch (err) {
+                    console.error('Erro ao abrir visualização da duplicata:', err);
+                }
             }
 
             async buscarCliente(nome) {
@@ -3023,14 +3146,29 @@
             if (ui.duplicataAtual && ui.clienteAtual) {
                 const mensagem = whatsappManager.gerarMensagem(ui.clienteAtual, ui.duplicataAtual);
                 document.getElementById('mensagem-whatsapp').value = mensagem;
+                // armazenar telefone limpo para uso no abrirWhatsApp
+                try {
+                    ui.clienteAtual._telefoneParaWhats = whatsappManager.obterTelefoneCliente(ui.clienteAtual);
+                } catch (e) {}
                 showModal('modal-whatsapp');
             }
         }
 
         function abrirWhatsApp() {
             const mensagem = document.getElementById('mensagem-whatsapp').value;
-            const telefone = ui.clienteAtual.whatsapp || ui.clienteAtual.telefone;
-            
+            // tentar obter telefone limpo (prioriza campo _telefoneParaWhats, gerado ao abrir modal)
+            let telefone = '';
+            try {
+                if (ui && ui.clienteAtual) {
+                    telefone = ui.clienteAtual._telefoneParaWhats || ui.clienteAtual.whatsapp || ui.clienteAtual.telefone || '';
+                }
+            } catch (e) {
+                telefone = '';
+            }
+
+            // limpar e validar
+            telefone = whatsappManager.formatarTelefone(telefone);
+
             if (telefone && mensagem) {
                 const link = whatsappManager.gerarLink(telefone, mensagem);
                 window.open(link, '_blank');
