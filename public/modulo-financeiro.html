@@ -2189,24 +2189,47 @@
                 try {
                     const duplicata = await this.db.get('receber', id);
                     if (!duplicata) return;
-                    
+
+                    // Ajuste de status local
                     duplicata.status = 'pago';
                     duplicata.dataPagamento = new Date().toISOString().split('T')[0];
-                    
+
+                    // Salva local (IndexedDB / localStorage)
                     await this.db.put('receber', duplicata);
-                    
-                    // Abrir recibo/imprimir e oferecer envio via WhatsApp (app)
+
+                    // >>> NOVO: sincronizar com o servidor <<<
+                    try {
+                        const resp = await fetch(`/api/financeiro/${duplicata.id}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                status: 'pago',
+                                dataPagamento: duplicata.dataPagamento,
+                                descricao: duplicata.descricao || '',
+                                observacoes: duplicata.observacoes || '',
+                                grupoParcelamentoId: duplicata.grupoParcelamentoId || null
+                            })
+                        });
+
+                        if (!resp.ok) {
+                            console.error('Erro API ao marcar pago', await resp.text().catch(()=>null));
+                            showToast('Registro pago localmente, mas falhou ao atualizar no servidor!', 'warning');
+                        }
+                    } catch (err) {
+                        console.warn('Falha na comunicação com servidor ao marcar pago', err);
+                        showToast('Sem conexão com o servidor. Pagamento salvo localmente apenas.', 'warning');
+                    }
+
+                    // Opcional: recibo
                     try {
                         const cliente = await this.db.get('clientes', duplicata.clienteId);
                         this.whatsappManager.abrirReciboImprimivel(cliente, duplicata);
-                    } catch (err) {
-                        console.warn('Erro ao abrir recibo após marcar como pago:', err);
-                    }
+                    } catch (e) { /* ignore */ }
 
                     showToast('Duplicata marcada como paga!', 'success');
                     this.carregarReceber();
                     this.carregarDadosDashboard();
-                    
+
                 } catch (error) {
                     console.error('Erro ao marcar como pago:', error);
                     showToast('Erro ao marcar como pago', 'error');

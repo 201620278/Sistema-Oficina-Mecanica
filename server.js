@@ -2541,35 +2541,45 @@ app.post('/api/financeiro', (req, res) => {
 app.put('/api/financeiro/:id', (req, res) => {
     const id = parseInt(req.params.id);
     const entrada = req.body;
+    // Garantir que a coluna `updated_at` exista (compatibilidade com DBs antigos)
+    const ensureColumnSql = `ALTER TABLE transacoes ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`;
 
-    const sql = `UPDATE transacoes SET 
-        status = ?,
-        descricao = ?,
-        observacoes = ?,
-        data_pagamento = ?,
-        grupo_parcelamento_id = ?,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?`;
-
-    const params = [
-        entrada.status || 'aberto',
-        entrada.descricao || '',
-        entrada.observacoes || '',
-        entrada.dataPagamento || null,
-        entrada.grupoParcelamentoId || null,
-        id
-    ];
-
-    db.run(sql, params, function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+    db.run(ensureColumnSql, [], function(alterErr) {
+        // ignorar erro de coluna duplicada (mensagem varia por versão do SQLite)
+        if (alterErr && !String(alterErr.message).toLowerCase().includes('duplicate') && !String(alterErr.message).toLowerCase().includes('already exists')) {
+            console.warn('Aviso ao tentar adicionar coluna updated_at:', alterErr.message);
+            // não abortamos, tentaremos executar o UPDATE mesmo assim
         }
-        if (this.changes === 0) {
-            res.status(404).json({ error: 'Registro não encontrado' });
-            return;
-        }
-        res.json({ id: String(id), ...entrada });
+
+        const sql = `UPDATE transacoes SET 
+            status = ?,
+            descricao = ?,
+            observacoes = ?,
+            data_pagamento = ?,
+            grupo_parcelamento_id = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`;
+
+        const params = [
+            entrada.status || 'aberto',
+            entrada.descricao || '',
+            entrada.observacoes || '',
+            entrada.dataPagamento || null,
+            entrada.grupoParcelamentoId || null,
+            id
+        ];
+
+        db.run(sql, params, function(err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            if (this.changes === 0) {
+                res.status(404).json({ error: 'Registro não encontrado' });
+                return;
+            }
+            res.json({ id: String(id), ...entrada });
+        });
     });
 });
 
