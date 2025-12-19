@@ -147,7 +147,16 @@
                     <div class="form-group filter-small">
                         <input type="text" id="filter-cliente" placeholder="Filtrar por cliente...">
                     </div>
-                    <!-- campo de mês removido -->
+                    <div class="form-group filter-small">
+                        <select id="filter-mes">
+                            <option value="">Mês</option>
+                        </select>
+                    </div>
+                    <div class="form-group filter-small">
+                        <select id="filter-ano">
+                            <option value="">Ano</option>
+                        </select>
+                    </div>
                     <div class="form-group filter-small">
                         <select id="filter-status-receber" onchange="filtrarReceber()">
                             <option value="">Todos os status</option>
@@ -828,11 +837,12 @@
                     const replaceInObject = (obj) => {
                         if (!obj || typeof obj !== 'object') return false;
                         let changed = false;
-                        const walk = (value, parent, key) => {
+
+                        const walk = (value, parent, k) => {
                             if (value === null || value === undefined) return;
                             if (typeof value === 'string' || typeof value === 'number') {
                                 if (String(value) === String(oldId)) {
-                                    parent[key] = String(newId);
+                                    parent[k] = String(newId);
                                     changed = true;
                                 }
                                 return;
@@ -844,10 +854,11 @@
                                 return;
                             }
                             if (typeof value === 'object') {
-                                Object.keys(value).forEach(k => walk(value[k], value, k));
+                                Object.keys(value).forEach(kk => walk(value[kk], value, kk));
                                 return;
                             }
                         };
+
                         Object.keys(obj).forEach(k => walk(obj[k], obj, k));
                         return changed;
                     };
@@ -861,8 +872,12 @@
                             if (Array.isArray(arr)) {
                                 for (let i = 0; i < arr.length; i++) {
                                     const it = arr[i];
-                                    const changed = replaceInObject(it);
-                                    if (changed) changedAny = true;
+                                    try {
+                                        const changed = replaceInObject(it);
+                                        if (changed) changedAny = true;
+                                    } catch (e) {
+                                        // ignore element parse errors
+                                    }
                                 }
                             } else if (typeof arr === 'object') {
                                 if (replaceInObject(arr)) changedAny = true;
@@ -901,6 +916,8 @@
 
             enqueueSync(store, item, originalLocalId = null) {
                 try {
+                    // garantir que o item contenha o tipo correto
+                    if (item && !item.tipo) item.tipo = store;
                     const queue = this._getSyncQueue();
                     const qItem = {
                         id: (Date.now()).toString() + Math.random().toString(36).substr(2,6),
@@ -943,7 +960,9 @@
                     const endpoint = `/api/financeiro/${id}`;
                     const body = { tipo: store, ...data };
                     
-                    if (navigator.onLine) {
+                    // Só tentar PUT no servidor se o id for numérico (server id). Se for id temporário, enfileirar para POST posteriormente.
+                    const isNumericId = String(id).match(/^\d+$/);
+                    if (navigator.onLine && isNumericId) {
                         try {
                             const response = await fetch(endpoint, {
                                 method: 'PUT',
@@ -954,11 +973,18 @@
                             if (response.ok) {
                                 console.log(`${store} atualizado no servidor com ID: ${id}`);
                             } else {
-                                console.warn('Erro ao atualizar no servidor, atualizando localmente');
+                                const text = await response.text().catch(() => null);
+                                console.warn('Erro ao atualizar no servidor, atualizando localmente', response.status, text);
+                                // Enfileirar para retry caso o servidor não aceite o PUT
+                                try { this.enqueueSync(store, body, id); } catch (e) { console.warn('Falha ao enfileirar item após PUT falho:', e); }
                             }
                         } catch (error) {
                             console.warn(`Erro ao sincronizar ${store}:`, error);
+                            try { this.enqueueSync(store, body, id); } catch (e) { console.warn('Falha ao enfileirar item após exception de PUT:', e); }
                         }
+                    } else if (!isNumericId) {
+                        // id local temporário: enfileirar para criação/atualização no servidor
+                        try { this.enqueueSync(store, body, id); } catch (e) { console.warn('Falha ao enfileirar item com id não-numérico:', e); }
                     }
                 }
                 
@@ -1334,13 +1360,30 @@
 
                 showToast('Sincronizando fila...', 'info');
                 try {
-                    if (!window.ui || !window.ui.db) {
-                        console.warn('UI/DB não inicializados para sincronização');
-                        showToast('UI/DB não prontos para sync', 'error');
+                    if (!window.ui) {
+                        console.warn('UI não inicializado para sincronização');
+                        showToast('UI não inicializado para sync', 'warning');
                         return;
                     }
 
-                    const db = window.ui.db;
+                    let db = window.ui.db;
+                    if (!db) {
+                        console.warn('DB não inicializado — tentando inicializar antes de sync');
+                        showToast('Banco não pronto para sync — inicializando...', 'info');
+                        if (typeof window.ui.init === 'function') {
+                            try {
+                                await window.ui.init();
+                                db = window.ui.db;
+                            } catch (e) {
+                                console.warn('Falha ao inicializar DB para sincronização:', e);
+                                showToast('Falha ao inicializar DB para sync', 'error');
+                                return;
+                            }
+                        } else {
+                            showToast('Banco não disponível para sincronização', 'error');
+                            return;
+                        }
+                    }
                     let qArr = db._getSyncQueue();
                     if (!qArr || qArr.length === 0) {
                         // fallback: recarregar dados do servidor
@@ -1372,6 +1415,43 @@
 
                             if (!navigator.onLine) throw new Error('offline');
                             console.log('Fila: tentando reenviar item:', q.id, q.store, q.originalLocalId, 'attempts=', attempts);
+
+                            // garantir id e tipo no item da fila (compatibilidade com filas antigas)
+                            if (!q.id) q.id = (Date.now()).toString() + Math.random().toString(36).substr(2,6);
+                            if (!q.item) q.item = {};
+                            if (!q.item.tipo) q.item.tipo = q.store;
+
+                            // Validações: para receber/pagar, garantir valor > 0 e vencimento
+                            try {
+                                const tipoLow = String(q.item.tipo || '').toLowerCase();
+                                if (tipoLow === 'receber' || tipoLow === 'pagar') {
+                                    // normalizar e validar valor
+                                    let vv = q.item.valor;
+                                    if (typeof vv === 'string') {
+                                        let s = vv.replace(/\s/g,'');
+                                        s = s.replace(/R\$|r\$/g,'');
+                                        if (s.indexOf('.') !== -1 && s.indexOf(',') !== -1) { s = s.replace(/\./g,''); s = s.replace(/,/g,'.'); }
+                                        else if (s.indexOf(',') !== -1) { s = s.replace(/,/g,'.'); }
+                                        s = s.replace(/[^0-9.-]/g,'');
+                                        vv = Number(s);
+                                    }
+                                    vv = Number(vv);
+                                    if (!vv || Number.isNaN(vv) || vv <= 0) {
+                                        console.warn(`Fila: item ${q.id} com valor inválido (${q.item.valor}), movendo para fila de falhas.`);
+                                        const failedKey = 'financeiro-sync-queue-failed';
+                                        const failedArr = JSON.parse(localStorage.getItem(failedKey) || '[]');
+                                        failedArr.push(Object.assign({ movedAt: new Date().toISOString(), reason: 'valor-invalido' }, q));
+                                        localStorage.setItem(failedKey, JSON.stringify(failedArr));
+                                        qArr.splice(i, 1);
+                                        db._setSyncQueue(qArr);
+                                        continue;
+                                    }
+                                    q.item.valor = vv;
+                                    if (!q.item.vencimento) q.item.vencimento = q.item.data || new Date().toISOString().split('T')[0];
+                                }
+                            } catch (valErr) {
+                                console.warn('Erro ao validar item da fila antes do POST:', valErr);
+                            }
 
                             // atualizar lastAttemptAt antes de tentar
                             q.lastAttemptAt = new Date().toISOString();
@@ -1407,8 +1487,33 @@
                                 qArr = db._getSyncQueue();
                                 continue;
                             } else {
-                                const parsed = await response.text().catch(() => null);
-                                console.warn('Fila: POST retornou erro', response.status, parsed);
+                                const parsedText = await response.text().catch(() => null);
+                                let parsed = null;
+                                try { parsed = parsedText ? JSON.parse(parsedText) : null; } catch(e){ parsed = null; }
+                                console.warn('Fila: POST retornou erro', response.status, parsed || parsedText);
+
+                                // Se for conflito (409), provavelmente já existe no servidor — remover do queue
+                                if (response.status === 409) {
+                                    console.warn(`Fila: item ${q.id} conflitou no servidor, removendo da fila.`);
+                                    qArr = db._getSyncQueue();
+                                    const idxNow = qArr.findIndex(x => String(x.id) === String(q.id));
+                                    if (idxNow >= 0) { qArr.splice(idxNow, 1); db._setSyncQueue(qArr); }
+                                    // forçar recarregamento do servidor ao final
+                                    i = 0; // continue loop with updated queue
+                                    continue;
+                                }
+
+                                // Erro 400 indicando tipo ausente/errado: tentar corrigir adicionando tipo e re-enfileirar
+                                if (response.status === 400 && parsed && parsed.error && parsed.error.toLowerCase().includes('tipo')) {
+                                    console.warn('Fila: resposta 400 sobre tipo — corrigindo tipo e re-enfileirando.');
+                                    q.item.tipo = q.store;
+                                    q.attempts = (q.attempts || 0) + 1;
+                                    q.lastAttemptAt = new Date().toISOString();
+                                    db._setSyncQueue(qArr);
+                                    i++;
+                                    continue;
+                                }
+
                                 // incrementar attempts
                                 q.attempts = (q.attempts || 0) + 1;
                                 q.lastAttemptAt = new Date().toISOString();
@@ -1887,7 +1992,28 @@
                     const group = groups[key];
                     // calcular resumo do grupo
                     const totalGroup = group.items.reduce((s, it) => s + Number(it.valor || 0), 0);
-                    const clienteNome = group.items[0].cliente || clientes.find(c => String(c.id) === String(group.items[0].clienteId))?.nome || '—';
+                    // resolver nome do cliente de forma robusta (evitar 'undefined' literal)
+                    const resolveFromItem = (it) => {
+                        if (!it) return null;
+                        const c = it.cliente;
+                        if (c && typeof c === 'object') return c.nome || c.nomeFantasia || null;
+                        if (c && typeof c === 'string') {
+                            const trimmed = c.trim();
+                            if (!trimmed || trimmed.toLowerCase() === 'undefined' || trimmed.toLowerCase() === 'null') return null;
+                            return trimmed;
+                        }
+                        if (it.clienteNome) return it.clienteNome;
+                        return null;
+                    };
+
+                    const clienteNome = resolveFromItem(group.items[0]) || clientsFindNombre(group.items[0]) || '—';
+
+                    function clientsFindNombre(it) {
+                        const cid = it.clienteId || it.cliente_id || it.cliente;
+                        if (!cid) return null;
+                        const found = clientes.find(c => String(c.id) === String(cid));
+                        return found ? (found.nome || found.nomeFantasia || found.razao || String(found.id)) : null;
+                    }
                     const descricaoGrupo = group.items[0].descricao || '';
 
                     // Cabeçalho do grupo (apenas quando há mais de 1 parcela ou quando veio com grupoParcelamentoId)
@@ -2890,6 +3016,12 @@
         const syncManager = new SyncManager();
         const whatsappManager = new WhatsAppManager();
 
+        // Tornar instâncias acessíveis globalmente para a sincronização e debug
+        // (trySync verifica window.ui e window.ui.db)
+        window.ui = ui;
+        window.syncManager = syncManager;
+        window.whatsappManager = whatsappManager;
+
         // Inicializar quando o DOM carregar
         document.addEventListener('DOMContentLoaded', async () => {
             console.log('=== INICIANDO SISTEMA FINANCEIRO ===');
@@ -2971,6 +3103,8 @@
             // Filtro automático: aplicar ao digitar/alterar sem necessidade de clicar
             const filterClienteEl = document.getElementById('filter-cliente');
             const filterStatusEl = document.getElementById('filter-status-receber');
+            const filterMesEl = document.getElementById('filter-mes');
+            const filterAnoEl = document.getElementById('filter-ano');
 
             if (filterClienteEl) {
                 let debounceTimerFilter;
@@ -2983,6 +3117,31 @@
             }
             if (filterStatusEl) {
                 filterStatusEl.addEventListener('change', () => filtrarReceber());
+            }
+            // Popular selects de mês (1-12) e ano (últimos 6 anos + ano atual + próximo ano)
+            if (filterMesEl) {
+                const monthNames = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho","Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"];
+                for (let m = 1; m <= 12; m++) {
+                    const opt = document.createElement('option');
+                    opt.value = String(m).padStart(2,'0');
+                    opt.textContent = monthNames[m-1];
+                    filterMesEl.appendChild(opt);
+                }
+                filterMesEl.addEventListener('change', () => filtrarReceber());
+            }
+
+            if (filterAnoEl) {
+                const now = new Date();
+                const currentYear = now.getFullYear();
+                const start = currentYear - 6; // 6 anos atrás
+                const end = currentYear + 1; // próximo ano
+                for (let y = start; y <= end; y++) {
+                    const opt = document.createElement('option');
+                    opt.value = String(y);
+                    opt.textContent = String(y);
+                    filterAnoEl.appendChild(opt);
+                }
+                filterAnoEl.addEventListener('change', () => filtrarReceber());
             }
         });
 
@@ -3397,11 +3556,27 @@
                         }
                     }
 
-                    // Filtrar por nome do cliente se informado
-                    if (clienteFiltro) {
-                        const nomeCliente = getClienteNome(item);
-                        if (!nomeCliente || !nomeCliente.includes(clienteFiltro)) return false;
-                    }
+                        // Filtrar por nome do cliente se informado
+                        if (clienteFiltro) {
+                            const nomeCliente = getClienteNome(item);
+                            if (!nomeCliente || !nomeCliente.includes(clienteFiltro)) return false;
+                        }
+
+                        // Filtrar por mês e ano selecionados
+                        const filtroMesVal = (document.getElementById('filter-mes') && document.getElementById('filter-mes').value) || '';
+                        const filtroAnoVal = (document.getElementById('filter-ano') && document.getElementById('filter-ano').value) || '';
+                        if (filtroMesVal || filtroAnoVal) {
+                            const venc = parseDate(item.vencimento || item.data || item.created_at || item.criado_em);
+                            if (!venc) return false;
+                            if (filtroMesVal) {
+                                const mnum = Number(filtroMesVal);
+                                if ((venc.getMonth() + 1) !== mnum) return false;
+                            }
+                            if (filtroAnoVal) {
+                                const ynum = Number(filtroAnoVal);
+                                if (venc.getFullYear() !== ynum) return false;
+                            }
+                        }
 
                     // Filtrar por intervalo de datas (vencimento)
                     if (inicioFiltroDate || fimFiltroDate) {
@@ -3421,11 +3596,38 @@
                 const tabela = document.getElementById('tabela-receber');
                 let html = '';
 
+                // carregar lista de clientes para resolver nomes
+                const _clientesList = (ui && ui.db && typeof ui.db.getAllSync === 'function') ? ui.db.getAllSync('clientes') || [] : (localStorage.getItem('clientes') ? JSON.parse(localStorage.getItem('clientes')||'[]') : []);
+
+                const resolveClienteNome = (it) => {
+                    if (!it) return '—';
+                    // se item.cliente for objeto
+                    const c = it.cliente;
+                    if (c && typeof c === 'object') {
+                        return c.nome || c.nomeFantasia || c.nome_completo || c.razao || c.nome || String(c.id) || '—';
+                    }
+                    // se item.cliente for string não vazia — pode já ser o nome
+                    if (c && typeof c === 'string' && c.trim() !== '') return c;
+                    // tentar campos alternativos
+                    if (it.clienteNome && it.clienteNome.trim()) return it.clienteNome;
+                    if (it.nome && it.nome.trim()) return it.nome;
+                    // procurar por clienteId/cliente_id
+                    const cid = it.clienteId || it.cliente_id || it.cliente_id_fk || null;
+                    if (cid) {
+                        const found = _clientesList.find(x => String(x.id) === String(cid) || String(x.id) === String(it.cliente));
+                        if (found) return found.nome || found.nomeFantasia || found.nome_completo || found.razao || String(found.id);
+                    }
+                    // fallback: se item.cliente aparenta ser id mas não encontrado, mostrar id
+                    if (c) return String(c);
+                    return '—';
+                };
+
                 filtrados.forEach(item => {
                     const valorFormatado = ui.formatarMoeda(item.valor || 0);
+                    const nomeCliente = resolveClienteNome(item);
                     html += `
                         <tr>
-                            <td>${item.cliente}</td>
+                            <td>${nomeCliente}</td>
                             <td>${item.descricao}</td>
                             <td>${item.parcela || '1/1'}</td>
                             <td>${valorFormatado}</td>
