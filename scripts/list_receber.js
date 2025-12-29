@@ -1,40 +1,58 @@
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
+
+// remover items específicos (substitua pelos ids locais se quiser)
+const ids = ['1765335128730czorj79yb','17653351286895xxttqsq4'];
+const keys = ['financeiro-receber','financeiro-pagar','financeiro-sync-queue','financeiro-sync-queue-failed'];
+ids.forEach(id => {
+  keys.forEach(k=>{
+    try {
+      let arr = JSON.parse(localStorage.getItem(k) || '[]');
+      arr = arr.filter(x => !(String(x.id)===String(id) || JSON.stringify(x).includes(id)));
+      localStorage.setItem(k, JSON.stringify(arr));
+    } catch(e){}
+  });
+});
+console.log('LocalStorage atualizado. Atualize a página.');
+
 const dbPath = path.join(__dirname, '..', 'database.db');
-const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READONLY, (err) => {
-  if (err) {
-    console.error('Erro abrindo DB:', err.message);
-    process.exit(1);
-  }
+const db = new sqlite3.Database(dbPath);
+
+db.serialize(() => {
+  const placeholders = ids.map(()=>'?').join(',');
+  const sql = `DELETE FROM transacoes WHERE id IN (${placeholders})`;
+  db.run(sql, ids, function(err) {
+    if (err) {
+      console.error('Erro ao deletar:', err);
+    } else {
+      console.log(`Deletado(s): ${this.changes} linha(s).`);
+      // opcional: listar novamente
+      db.all('SELECT id, cliente_id, descricao, valor FROM transacoes ORDER BY id DESC LIMIT 50', [], (err2, rows) => {
+        if (!err2) {
+          console.log('Registros atuais (amostra):');
+          rows.forEach(r => console.log(r));
+        }
+        db.close();
+      });
+    }
+  });
 });
 
 db.serialize(() => {
-  db.all("PRAGMA table_info(transacoes)", [], (err, cols) => {
+  const sql = `DELETE FROM transacoes WHERE cliente_id = 1 AND valor = 450 AND descricao LIKE '%Orçamento 1%'`;
+  db.run(sql, function(err) {
     if (err) {
-      console.error('Erro obtendo colunas:', err.message);
-      db.close();
-      process.exit(1);
-    }
-    console.log('Colunas da tabela transacoes:');
-    console.log(cols.map(c => c.name).join(', '));
-
-    db.all("SELECT * FROM transacoes ORDER BY id DESC LIMIT 50", [], (err2, rows) => {
-      if (err2) {
-        console.error('Erro na query:', err2.message);
+      console.error('Erro ao deletar:', err);
+    } else {
+      console.log(`Deletado(s): ${this.changes} linha(s).`);
+      // opcional: listar novamente
+      db.all('SELECT id, cliente_id, descricao, valor FROM transacoes ORDER BY id DESC LIMIT 50', [], (err2, rows) => {
+        if (!err2) {
+          console.log('Registros atuais (amostra):');
+          rows.forEach(r => console.log(r));
+        }
         db.close();
-        process.exit(1);
-      }
-      if (!rows || rows.length === 0) {
-        console.log('Nenhum registro "receber" encontrado.');
-        db.close();
-        return;
-      }
-      console.log('\nÚltimos registros em transacoes (até 50):');
-      rows.forEach(r => {
-        // imprimir algumas colunas conhecidas e qualquer outra chave dinâmica
-        console.log(`- id=${r.id}  descricao=${r.descricao || ''}  valor=${r.valor || 0}  venc=${r.vencimento || r.data || ''}  status=${r.status || ''}  raw=${JSON.stringify(r)}`);
       });
-      db.close();
-    });
+    }
   });
 });

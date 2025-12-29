@@ -2321,6 +2321,59 @@ app.get('/api/financeiro', (req, res) => {
     });
 });
 
+// Página utilitária: limpar itens específicos no localStorage do navegador
+// Uso: acesse http://localhost:3000/clear-local-storage no navegador para executar
+app.get('/clear-local-storage', (req, res) => {
+    const idsToRemove = [
+        '1765904617785635',
+        '1765904617785636',
+        '17653351286895xxttqsq4',
+        '1765335128730czorj79yb'
+    ];
+
+    const idsJson = JSON.stringify(idsToRemove).replace(/'/g, "\\'");
+
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>Limpar LocalStorage</title></head><body>
+    <h3>Limpar LocalStorage — rodando script</h3>
+    <pre id="out">Executando...</pre>
+    <script>
+        (function(){
+            try {
+                const keys = ['financeiro-receber','financeiro-pagar','financeiro-sync-queue','financeiro-sync-queue-failed'];
+                const out = document.getElementById('out');
+                function log(s){ out.textContent += '\n' + s; console.log(s); }
+                // backup to window for possible manual copy
+                const backup = {};
+                keys.forEach(k => backup[k] = localStorage.getItem(k));
+                window._localStorageBackup = backup;
+                log('Backup salvo em window._localStorageBackup');
+
+                const ids = JSON.parse('${idsJson}');
+                ids.forEach(id => {
+                    keys.forEach(k => {
+                        try {
+                            let arr = JSON.parse(localStorage.getItem(k) || '[]');
+                            const before = arr.length;
+                            arr = arr.filter(x => {
+                                try { return !(String(x.id) === String(id) || JSON.stringify(x).indexOf(String(id)) !== -1); } catch(e){ return true; }
+                            });
+                            localStorage.setItem(k, JSON.stringify(arr));
+                            if (before !== arr.length) log('Removed id ' + id + ' from ' + k + ': ' + before + ' -> ' + arr.length);
+                        } catch(e) { log('Erro ao processar ' + k + ': ' + e); }
+                    });
+                });
+
+                log('Remoção concluída — recarregando...');
+                setTimeout(()=>{ location.href = '/public/modulo-financeiro.html#receber'; }, 1200);
+            } catch(e){ document.getElementById('out').textContent = 'Erro: ' + e; }
+        })();
+    </script>
+    </body></html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+});
+
 // GET financial data by type (receber/pagar)
 app.get('/api/financeiro/:tipo', (req, res) => {
     const tipo = req.params.tipo;
@@ -2463,21 +2516,28 @@ app.post('/api/financeiro', (req, res) => {
     }
 
     // Verificar duplicação: apenas uma entrada por orcamento_id
+    // OBS: não aplicar verificação para lançamentos parcelados, pois um orçamento pode gerar múltiplas parcelas
     if (entrada.orcamentoId) {
-        db.get(`SELECT id FROM transacoes WHERE orcamento_id = ? AND tipo = ? AND status IN ('aberto', 'atrasado')`,
-            [entrada.orcamentoId, entrada.tipo],
-            (err, row) => {
-                if (err) {
-                    res.status(500).json({ error: err.message });
-                    return;
+        const isParcelado = entrada.parcelado === true || entrada.parcelado === 1 || entrada.parcelado === '1' || String(entrada.parcelado).toLowerCase() === 'true';
+        if (isParcelado) {
+            // Para parcelados, permitir inserção de múltiplos registros para o mesmo orçamento
+            inserirEntrada();
+        } else {
+            db.get(`SELECT id FROM transacoes WHERE orcamento_id = ? AND tipo = ? AND status IN ('aberto', 'atrasado')`,
+                [entrada.orcamentoId, entrada.tipo],
+                (err, row) => {
+                    if (err) {
+                        res.status(500).json({ error: err.message });
+                        return;
+                    }
+                    if (row) {
+                        res.status(409).json({ error: `Já existe um ${entrada.tipo} aberto para este orçamento` });
+                        return;
+                    }
+                    inserirEntrada();
                 }
-                if (row) {
-                    res.status(409).json({ error: `Já existe um ${entrada.tipo} aberto para este orçamento` });
-                    return;
-                }
-                inserirEntrada();
-            }
-        );
+            );
+        }
     } else {
         inserirEntrada();
     }
