@@ -217,6 +217,7 @@ function inicializarBanco() {
             confirmado_em TEXT,
             criado_em TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME,
             grupo_parcelamento_id TEXT,
             FOREIGN KEY (orcamento_id) REFERENCES orcamentos(id),
             FOREIGN KEY (cliente_id) REFERENCES clientes(id)
@@ -240,7 +241,8 @@ function inicializarBanco() {
             'ALTER TABLE transacoes ADD COLUMN criado_em TEXT',
             'ALTER TABLE transacoes ADD COLUMN vencimento TEXT',
             'ALTER TABLE transacoes ADD COLUMN data_pagamento TEXT',
-            'ALTER TABLE transacoes ADD COLUMN grupo_parcelamento_id TEXT'
+            'ALTER TABLE transacoes ADD COLUMN grupo_parcelamento_id TEXT',
+            'ALTER TABLE transacoes ADD COLUMN updated_at DATETIME'
         ];
 
         transacaoColumnsToAdd.forEach(sql => {
@@ -2293,7 +2295,7 @@ app.get('/api/financeiro', (req, res) => {
     db.all(`SELECT 
         id, descricao, tipo, valor, data, status, orcamento_id, cliente_id, 
         numero_parcela, total_parcelas, forma_pagamento, vencimento, data_pagamento,
-        observacoes, created_at
+        observacoes, created_at, updated_at
     FROM transacoes 
     WHERE tipo IN ('receber', 'pagar') 
     ORDER BY data DESC`, [], (err, rows) => {
@@ -2385,7 +2387,7 @@ app.get('/api/financeiro/:tipo', (req, res) => {
     db.all(`SELECT 
         id, descricao, tipo, valor, data, status, orcamento_id, cliente_id, 
         numero_parcela, total_parcelas, forma_pagamento, vencimento, data_pagamento,
-        observacoes, created_at, grupo_parcelamento_id
+        observacoes, created_at, updated_at, grupo_parcelamento_id
     FROM transacoes 
     WHERE tipo = ? 
     ORDER BY vencimento DESC`, [tipo], (err, rows) => {
@@ -2601,45 +2603,35 @@ app.post('/api/financeiro', (req, res) => {
 app.put('/api/financeiro/:id', (req, res) => {
     const id = parseInt(req.params.id);
     const entrada = req.body;
-    // Garantir que a coluna `updated_at` exista (compatibilidade com DBs antigos)
-    const ensureColumnSql = `ALTER TABLE transacoes ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`;
 
-    db.run(ensureColumnSql, [], function(alterErr) {
-        // ignorar erro de coluna duplicada (mensagem varia por versão do SQLite)
-        if (alterErr && !String(alterErr.message).toLowerCase().includes('duplicate') && !String(alterErr.message).toLowerCase().includes('already exists')) {
-            console.warn('Aviso ao tentar adicionar coluna updated_at:', alterErr.message);
-            // não abortamos, tentaremos executar o UPDATE mesmo assim
+    const sql = `UPDATE transacoes SET 
+        status = ?,
+        descricao = ?,
+        observacoes = ?,
+        data_pagamento = ?,
+        grupo_parcelamento_id = ?,
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?`;
+
+    const params = [
+        entrada.status || 'aberto',
+        entrada.descricao || '',
+        entrada.observacoes || '',
+        entrada.dataPagamento || null,
+        entrada.grupoParcelamentoId || null,
+        id
+    ];
+
+    db.run(sql, params, function(err) {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
         }
-
-        const sql = `UPDATE transacoes SET 
-            status = ?,
-            descricao = ?,
-            observacoes = ?,
-            data_pagamento = ?,
-            grupo_parcelamento_id = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?`;
-
-        const params = [
-            entrada.status || 'aberto',
-            entrada.descricao || '',
-            entrada.observacoes || '',
-            entrada.dataPagamento || null,
-            entrada.grupoParcelamentoId || null,
-            id
-        ];
-
-        db.run(sql, params, function(err) {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            if (this.changes === 0) {
-                res.status(404).json({ error: 'Registro não encontrado' });
-                return;
-            }
-            res.json({ id: String(id), ...entrada });
-        });
+        if (this.changes === 0) {
+            res.status(404).json({ error: 'Registro não encontrado' });
+            return;
+        }
+        res.json({ id: String(id), ...entrada });
     });
 });
 
