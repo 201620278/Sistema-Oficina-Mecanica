@@ -759,9 +759,28 @@
             <form id="form-agendamento">
                 <div class="form-group">
                     <label>Cliente *</label>
-                    <select id="agendamento-cliente" required onchange="sistema.carregarVeiculosCliente(this.value)">
+                    <div style="position: relative;">
+                        <input type="text" id="agendamento-cliente-search" 
+                               placeholder="Digite o nome ou telefone do cliente..." 
+                               style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;"
+                               oninput="sistema.filtrarClientesAgendamento(this.value)">
+                        <div id="agendamento-cliente-lista" 
+                             style="position: absolute; top: 100%; left: 0; right: 0; background: white; 
+                                    border: 1px solid #ccc; border-top: none; max-height: 250px; overflow-y: auto; 
+                                    z-index: 1000; border-radius: 0 0 4px 4px; display: none;">
+                            <!-- Lista de clientes será preenchida aqui -->
+                        </div>
+                    </div>
+                    <select id="agendamento-cliente" required style="display: none;">
                         <option value="">Selecione um cliente</option>
                     </select>
+                    <div id="cliente-selecionado-badge" style="margin-top: 8px; display: none;">
+                        <span style="background: #007bff; color: white; padding: 6px 12px; border-radius: 20px; font-size: 14px;">
+                            <span id="cliente-selecionado-nome"></span>
+                            <button type="button" style="background: none; border: none; color: white; cursor: pointer; margin-left: 8px; font-weight: bold;" 
+                                    onclick="sistema.limparClienteSelecionado()">×</button>
+                        </span>
+                    </div>
                 </div>
 
                 <div class="form-group">
@@ -3116,6 +3135,87 @@
                 });
                 
                 console.log('Veículos carregados no select:', veiculos.length, veiculos.map(v => ({ id: v.id, placa: v.placa })));
+            }
+
+            filtrarClientesAgendamento(termo) {
+                const lista = document.getElementById('agendamento-cliente-lista');
+                const searchInput = document.getElementById('agendamento-cliente-search');
+                
+                console.log('Filtrando clientes:', termo, 'Total de clientes:', state.dados.clientes.length);
+                
+                if (!termo || termo.trim().length < 1) {
+                    lista.style.display = 'none';
+                    return;
+                }
+
+                const termoLower = termo.toLowerCase();
+                const clientesFiltrados = state.dados.clientes.filter(c => 
+                    (c.nome && c.nome.toLowerCase().includes(termoLower)) ||
+                    (c.telefone && c.telefone.includes(termo))
+                ).slice(0, 15); // Limitar a 15 resultados
+                
+                console.log('Clientes filtrados:', clientesFiltrados.length);
+
+                if (clientesFiltrados.length === 0) {
+                    lista.innerHTML = '<div style="padding: 10px; color: #999;">Nenhum cliente encontrado</div>';
+                    lista.style.display = 'block';
+                    return;
+                }
+
+                lista.innerHTML = clientesFiltrados.map(cliente => `
+                    <div style="padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; transition: background-color 0.2s;"
+                         onmouseover="this.style.backgroundColor = '#f5f5f5';"
+                         onmouseout="this.style.backgroundColor = 'transparent';"
+                         onclick="sistema.selecionarClienteAgendamento(${cliente.id}, '${cliente.nome.replace(/'/g, "\\'")}', '${cliente.telefone || ''}')">
+                        <div style="font-weight: bold;">${cliente.nome}</div>
+                        <div style="font-size: 12px; color: #666;">
+                            ${cliente.telefone ? '📱 ' + cliente.telefone : ''}
+                            ${cliente.email ? '📧 ' + cliente.email : ''}
+                        </div>
+                    </div>
+                `).join('');
+                
+                lista.style.display = 'block';
+            }
+
+            selecionarClienteAgendamento(clienteId, clienteNome, clienteTelefone) {
+                // Atualizar o select hidden com o valor
+                document.getElementById('agendamento-cliente').value = clienteId;
+                
+                // Desabilitar e limpar o input de busca
+                const searchInput = document.getElementById('agendamento-cliente-search');
+                searchInput.value = '';
+                searchInput.disabled = true;
+                searchInput.style.opacity = '0.6';
+                searchInput.style.cursor = 'not-allowed';
+                searchInput.placeholder = 'Cliente selecionado - clique o X para mudar';
+                
+                // Mostrar badge com cliente selecionado
+                const badge = document.getElementById('cliente-selecionado-badge');
+                document.getElementById('cliente-selecionado-nome').textContent = clienteNome;
+                badge.style.display = 'block';
+                
+                // Fechar a lista
+                document.getElementById('agendamento-cliente-lista').style.display = 'none';
+                
+                // Carregar veículos do cliente
+                this.carregarVeiculosCliente(clienteId);
+                
+                console.log('Cliente selecionado:', clienteId, clienteNome);
+            }
+
+            limparClienteSelecionado() {
+                const searchInput = document.getElementById('agendamento-cliente-search');
+                
+                document.getElementById('agendamento-cliente').value = '';
+                searchInput.value = '';
+                searchInput.disabled = false;
+                searchInput.style.opacity = '1';
+                searchInput.style.cursor = 'text';
+                searchInput.placeholder = 'Digite o nome ou telefone do cliente...';
+                document.getElementById('cliente-selecionado-badge').style.display = 'none';
+                document.getElementById('agendamento-veiculo').innerHTML = '<option value="">Selecione um veículo</option>';
+                searchInput.focus();
             }
 
             carregarAgendamentosClienteOrcamento(clienteId) {
@@ -8574,6 +8674,15 @@ Obrigado pela confiança! 🙏`;
             delete form.dataset.editId;
             // Restaurar título do modal
             document.querySelector('#modal-agendamento .modal-title').textContent = 'Novo Agendamento';
+            // Limpar busca de cliente
+            const searchInput = document.getElementById('agendamento-cliente-search');
+            searchInput.value = '';
+            searchInput.disabled = false;
+            searchInput.style.opacity = '1';
+            searchInput.style.cursor = 'text';
+            searchInput.placeholder = 'Digite o nome ou telefone do cliente...';
+            document.getElementById('agendamento-cliente-lista').style.display = 'none';
+            document.getElementById('cliente-selecionado-badge').style.display = 'none';
         }
 
         function abrirModalTransacao() {
