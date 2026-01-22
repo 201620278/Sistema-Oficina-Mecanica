@@ -661,6 +661,54 @@
         </div>
     </div>
 
+    <!-- Modal Visualizar Fornecedor -->
+    <div id="modal-visualizar-fornecedor" class="modal">
+        <div class="modal-content" style="max-width:600px">
+            <div class="modal-header">
+                <h3>Visualizar Fornecedor</h3>
+                <button class="modal-close" onclick="hideModal('modal-visualizar-fornecedor')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Fornecedor</label>
+                    <div id="vis-forn-nome" style="font-weight:600"></div>
+                </div>
+                <div class="form-group">
+                    <label>Telefone</label>
+                    <div id="vis-forn-telefone"></div>
+                </div>
+                <div class="form-group">
+                    <label>Descrição</label>
+                    <div id="vis-forn-descricao"></div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1">
+                        <label>Parcela</label>
+                        <div id="vis-forn-parcela"></div>
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label>Vencimento</label>
+                        <div id="vis-forn-vencimento"></div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1">
+                        <label>Valor</label>
+                        <div id="vis-forn-valor"></div>
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label>Status</label>
+                        <div id="vis-forn-status"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">
+                <button class="btn btn-secondary" onclick="hideModal('modal-visualizar-fornecedor')">Fechar</button>
+                <button class="btn btn-success" onclick="ui.marcarComoPagoPagar(ui.contaPagarAtual.id)">Marcar como pago</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal Lançamento Pagar -->
     <div id="modal-lancamento-pagar" class="modal">
         <div class="modal-content">
@@ -2469,6 +2517,32 @@
                 }
             }
 
+            async visualizarFornecedor(id) {
+                try {
+                    const contaPagar = await this.db.get('pagar', id);
+                    if (!contaPagar) return;
+
+                    const fornecedores = this.db.getAllSync('fornecedores') || [];
+                    const fornecedor = fornecedores.find(f => String(f.id) === String(contaPagar.fornecedorId) || String(f.id) === String(contaPagar.fornecedor_id) || String(f.id) === String(contaPagar.fornecedor)) || null;
+
+                    this.contaPagarAtual = contaPagar;
+                    this.fornecedorAtual = fornecedor;
+
+                    // preencher modal de visualização
+                    document.getElementById('vis-forn-nome').innerText = fornecedor && fornecedor.nome ? fornecedor.nome : (contaPagar.fornecedor || '—');
+                    document.getElementById('vis-forn-telefone').innerText = fornecedor && (fornecedor.telefone || fornecedor.whatsapp) ? (fornecedor.telefone || fornecedor.whatsapp) : '';
+                    document.getElementById('vis-forn-descricao').innerText = contaPagar.descricao || '';
+                    document.getElementById('vis-forn-parcela').innerText = contaPagar.parcela || '';
+                    document.getElementById('vis-forn-vencimento').innerText = this.formatarData(contaPagar.vencimento);
+                    document.getElementById('vis-forn-valor').innerText = this.formatarMoeda(Number(contaPagar.valor || 0));
+                    document.getElementById('vis-forn-status').innerHTML = this.criarBadgeStatus(contaPagar);
+
+                    showModal('modal-visualizar-fornecedor');
+                } catch (err) {
+                    console.error('Erro ao abrir visualização do fornecedor:', err);
+                }
+            }
+
             async buscarCliente(nome) {
                 if (!nome || nome.trim() === '') {
                     const datalist = document.getElementById('clientes-list');
@@ -4176,8 +4250,8 @@
                     const nomeFornecedor = resolveFornecedorNome(item);
                     const parcelaLabel = buildParcelaLabel(item);
                     html += `
-                        <tr style="cursor:pointer">
-                            <td>${nomeFornecedor}</td>
+                        <tr onclick="ui.visualizarFornecedor('${item.id}')" style="cursor:pointer">
+                            <td><a href="#" onclick="event.stopPropagation(); ui.visualizarFornecedor('${item.id}'); return false;" style="color:#2980b9;text-decoration:none">${nomeFornecedor}</a></td>
                             <td>${item.descricao}</td>
                             <td>${parcelaLabel}</td>
                             <td>${valorFormatado}</td>
