@@ -405,5 +405,27 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--s
 .gap-10 { gap: 10px; }
 .cursor-pointer { cursor: pointer; }
 
+/* Estilos para botões de seleção no modal de cleanup */
+#modal-cleanup-financeiro-selecao button[onclick*="abrirCleanupFinanceiro"],
+#modal-cleanup-financeiro button[onclick*="selecionarTipoCleanup"] {
+	opacity: 1;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+#modal-cleanup-financeiro-selecao button[onclick*="abrirCleanupFinanceiro"]:hover,
+#modal-cleanup-financeiro button[onclick*="selecionarTipoCleanup"]:hover {
+	opacity: 1;
+	box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
+	transform: translateY(-2px);
+	filter: brightness(1.08);
+}
+
+#modal-cleanup-financeiro-selecao button[onclick*="abrirCleanupFinanceiro"]:active,
+#modal-cleanup-financeiro button[onclick*="selecionarTipoCleanup"]:active {
+	transform: translateY(0);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
 /* ===== Fim dos estilos extraídos do modulo-financeiro.html ===== */
+
 

@@ -403,7 +403,23 @@
                 <button class="modal-close" onclick="hideModal('modal-cleanup-financeiro')">&times;</button>
             </div>
             <div class="modal-body">
-                <p>Esta ação fará backup dos registros selecionados e os removerá permanentemente do banco de dados.</p>
+                <div style="margin-bottom:25px">
+                    <p style="color:#555;font-size:14px;margin-bottom:15px">Selecione qual tipo de registro deseja limpar:</p>
+                    <div style="display:flex;flex-direction:column;gap:12px">
+                        <button onclick="selecionarTipoCleanup('receber')" type="button" id="btn-cleanup-receber" style="background:#3498db;color:white;padding:15px;border-radius:8px;cursor:pointer;border:2px solid #3498db;font-size:15px;font-weight:600;display:flex;align-items:center;gap:12px;transition:all 0.3s ease;box-shadow:0 2px 8px rgba(0,0,0,0.1)">
+                            <i class="fas fa-money-bill-wave"></i> 
+                            <span>Contas a Receber</span>
+                        </button>
+                        <button onclick="selecionarTipoCleanup('pagar')" type="button" id="btn-cleanup-pagar" style="background:#e74c3c;color:white;padding:15px;border-radius:8px;cursor:pointer;border:2px solid #e74c3c;font-size:15px;font-weight:600;display:flex;align-items:center;gap:12px;transition:all 0.3s ease;box-shadow:0 2px 8px rgba(0,0,0,0.1)">
+                            <i class="fas fa-credit-card"></i> 
+                            <span>Contas a Pagar</span>
+                        </button>
+                    </div>
+                </div>
+
+                <hr style="margin:20px 0;border:none;border-top:1px solid #eee">
+
+                <p style="color:#555;font-size:14px;margin-bottom:15px">Esta ação fará backup dos registros selecionados e os removerá permanentemente do banco de dados.</p>
                 <div class="form-group">
                     <label for="cleanup-before-date">Remover registros com data/vencimento anteriores a:</label>
                     <input type="date" id="cleanup-before-date">
@@ -423,6 +439,32 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" onclick="hideModal('modal-cleanup-financeiro')">Cancelar</button>
                 <button class="btn btn-danger" onclick="executarCleanupFinanceiro()">Executar limpeza segura</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Seleção de Módulo Financeiro para Limpeza -->
+    <div id="modal-cleanup-financeiro-selecao" class="modal">
+        <div class="modal-content" style="max-width:500px">
+            <div class="modal-header">
+                <h3 style="margin:0;color:#2c3e50">Selecionar Módulo Financeiro</h3>
+                <button class="modal-close" onclick="hideModal('modal-cleanup-financeiro-selecao')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin:0 0 25px 0;color:#555;font-size:15px">Selecione qual tipo de registro você deseja limpar:</p>
+                <div style="display:flex;flex-direction:column;gap:15px">
+                    <button onclick="abrirCleanupFinanceiro('receber')" type="button" style="background:#3498db;color:white;padding:20px;border-radius:8px;cursor:pointer;border:none;font-size:16px;font-weight:600;display:flex;align-items:center;gap:15px;transition:all 0.3s ease;box-shadow:0 2px 8px rgba(0,0,0,0.1)">
+                        <i class="fas fa-money-bill-wave" style="font-size:20px"></i> 
+                        <span>Contas a Receber</span>
+                    </button>
+                    <button onclick="abrirCleanupFinanceiro('pagar')" type="button" style="background:#e74c3c;color:white;padding:20px;border-radius:8px;cursor:pointer;border:none;font-size:16px;font-weight:600;display:flex;align-items:center;gap:15px;transition:all 0.3s ease;box-shadow:0 2px 8px rgba(0,0,0,0.1)">
+                        <i class="fas fa-credit-card" style="font-size:20px"></i> 
+                        <span>Contas a Pagar</span>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer" style="border-top:1px solid #eee;padding-top:15px">
+                <button class="btn btn-secondary" onclick="hideModal('modal-cleanup-financeiro-selecao')">Cancelar</button>
             </div>
         </div>
     </div>
@@ -2388,6 +2430,37 @@
                     const duplicata = await this.db.get('receber', id);
                     if (!duplicata) return;
 
+                    // Validação: se for parcela, verificar se a parcela anterior foi paga
+                    const numeroParcela = duplicata.numeroParcela || duplicata.numero_parcela;
+                    if (numeroParcela && numeroParcela > 1) {
+                        // É uma parcela (não é a primeira), verificar parcelas anteriores
+                        const todasAsRecebidas = await this.db.getAll('receber');
+                        
+                        // Encontrar a parcela anterior
+                        const grupoParcelamentoId = duplicata.grupoParcelamentoId || duplicata.grupo_parcelamento_id;
+                        const orcamentoId = duplicata.orcamentoId || duplicata.orcamento_id;
+                        
+                        let parcelaAnterior = null;
+                        
+                        // Buscar pela parcela número (numero_parcela - 1) no mesmo grupo
+                        if (grupoParcelamentoId) {
+                            parcelaAnterior = todasAsRecebidas.find(r => 
+                                (r.numero_parcela === numeroParcela - 1 || r.numeroParcela === numeroParcela - 1) &&
+                                (r.grupo_parcelamento_id === grupoParcelamentoId || r.grupoParcelamentoId === grupoParcelamentoId)
+                            );
+                        } else if (orcamentoId) {
+                            parcelaAnterior = todasAsRecebidas.find(r => 
+                                (r.numero_parcela === numeroParcela - 1 || r.numeroParcela === numeroParcela - 1) &&
+                                (r.orcamento_id === orcamentoId || r.orcamentoId === orcamentoId)
+                            );
+                        }
+                        
+                        if (parcelaAnterior && (parcelaAnterior.status || '').toLowerCase() !== 'pago') {
+                            showToast(`❌ Não é possível liquidar a parcela ${numeroParcela}. A parcela ${numeroParcela - 1} ainda não foi paga!`, 'error');
+                            return;
+                        }
+                    }
+
                     // Ajuste de status local
                     duplicata.status = 'pago';
                     duplicata.dataPagamento = new Date().toISOString().split('T')[0];
@@ -2410,7 +2483,19 @@
                         });
 
                         if (!resp.ok) {
-                            console.error('Erro API ao marcar pago', await resp.text().catch(()=>null));
+                            const errorData = await resp.json().catch(() => ({}));
+                            console.error('Erro API ao marcar pago', errorData);
+                            
+                            // Se foi erro 409 (conflito), é a validação de parcelas
+                            if (resp.status === 409 && errorData.details) {
+                                showToast(`❌ ${errorData.details.mensagem}`, 'error');
+                                // Reverter o status local
+                                duplicata.status = 'aberto';
+                                delete duplicata.dataPagamento;
+                                await this.db.put('receber', duplicata);
+                                return;
+                            }
+                            
                             showToast('Registro pago localmente, mas falhou ao atualizar no servidor!', 'warning');
                         }
                     } catch (err) {
@@ -3679,11 +3764,69 @@
             }
         }
 
+        function selecionarTipoCleanup(tipo) {
+            // Armazenar o tipo selecionado
+            window.cleanupFinanceiroTipo = tipo;
+            
+            // Limpar os campos
+            document.getElementById('cleanup-before-date').value = '';
+            document.getElementById('cleanup-admin-pass').value = '';
+            document.getElementById('cleanup-confirm').value = '';
+            
+            // Resetar botão
+            const btn = document.querySelector('#modal-cleanup-financeiro .modal-footer .btn-danger');
+            btn.disabled = false;
+            btn.innerHTML = 'Executar limpeza segura';
+            
+            // Atualizar botões de seleção - remover destaque de todos
+            document.getElementById('btn-cleanup-receber').style.background = '#3498db';
+            document.getElementById('btn-cleanup-receber').style.borderColor = '#3498db';
+            document.getElementById('btn-cleanup-pagar').style.background = '#e74c3c';
+            document.getElementById('btn-cleanup-pagar').style.borderColor = '#e74c3c';
+            
+            // Destacar o selecionado
+            if (tipo === 'receber') {
+                document.getElementById('btn-cleanup-receber').style.background = '#2980b9';
+                document.getElementById('btn-cleanup-receber').style.borderColor = '#2980b9';
+            } else {
+                document.getElementById('btn-cleanup-pagar').style.background = '#c0392b';
+                document.getElementById('btn-cleanup-pagar').style.borderColor = '#c0392b';
+            }
+            
+            showToast(`Selecionado: ${tipo === 'receber' ? 'Contas a Receber' : 'Contas a Pagar'}`, 'info');
+        }
+
+        function abrirCleanupFinanceiro(tipo) {
+            // Armazenar o tipo selecionado
+            window.cleanupFinanceiroTipo = tipo;
+            
+            // Atualizar o título do modal
+            const titulo = tipo === 'receber' ? 'Contas a Receber' : 'Contas a Pagar';
+            document.querySelector('#modal-cleanup-financeiro .modal-header h3').textContent = `Limpar registros antigos (${titulo})`;
+            
+            // Limpar os campos
+            document.getElementById('cleanup-before-date').value = '';
+            document.getElementById('cleanup-admin-pass').value = '';
+            document.getElementById('cleanup-confirm').value = '';
+            
+            // Resetar botão
+            const btn = document.querySelector('#modal-cleanup-financeiro .modal-footer .btn-danger');
+            btn.disabled = false;
+            btn.innerHTML = 'Executar limpeza segura';
+            
+            // Fechar modal de seleção
+            hideModal('modal-cleanup-financeiro-selecao');
+            
+            // Abrir modal de cleanup
+            showModal('modal-cleanup-financeiro');
+        }
+
         async function executarCleanupFinanceiro() {
             try {
                 const beforeDate = document.getElementById('cleanup-before-date').value;
                 const pass = document.getElementById('cleanup-admin-pass').value;
                 const confirmText = document.getElementById('cleanup-confirm').value;
+                const tipo = window.cleanupFinanceiroTipo || 'ambos';
 
                 if (!beforeDate) {
                     showToast('Informe a data limite (antes de)...', 'warning');
@@ -3706,7 +3849,7 @@
                 const resp = await fetch('/api/financeiro/cleanup', {
                     method: 'POST',
                     headers,
-                    body: JSON.stringify({ beforeDate, confirm: true })
+                    body: JSON.stringify({ beforeDate, confirm: true, tipo })
                 });
 
                 const data = await resp.json();

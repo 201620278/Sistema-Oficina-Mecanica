@@ -535,7 +535,7 @@ app.delete('/api/storage', (req, res) => {
 // - body.confirm === true
 // - Se variável de ambiente ADMIN_PASSWORD definida, header 'x-admin-password' deve corresponder
 app.post('/api/financeiro/cleanup', (req, res) => {
-    const { beforeDate, confirm } = req.body || {};
+    const { beforeDate, confirm, tipo } = req.body || {};
 
     if (!beforeDate) {
         res.status(400).json({ error: 'beforeDate é obrigatório (YYYY-MM-DD)' });
@@ -561,9 +561,18 @@ app.post('/api/financeiro/cleanup', (req, res) => {
         return;
     }
 
+    // Construir cláusula WHERE para filtrar por tipo se especificado
+    let whereClause = '(vencimento IS NOT NULL AND vencimento <= ?) OR (data IS NOT NULL AND data <= ?)';
+    let params = [beforeDate, beforeDate];
+    
+    if (tipo && (tipo === 'receber' || tipo === 'pagar')) {
+        whereClause += ` AND tipo = ?`;
+        params.push(tipo);
+    }
+
     // Buscar registros que serão removidos (baseado em vencimento ou data)
-    const sqlSelect = `SELECT * FROM transacoes WHERE (vencimento IS NOT NULL AND vencimento <= ?) OR (data IS NOT NULL AND data <= ?)`;
-    db.all(sqlSelect, [beforeDate, beforeDate], (err, rows) => {
+    const sqlSelect = `SELECT * FROM transacoes WHERE ${whereClause}`;
+    db.all(sqlSelect, params, (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
@@ -582,8 +591,9 @@ app.post('/api/financeiro/cleanup', (req, res) => {
             console.error('Erro ao criar pasta de backups:', mkdirErr.message);
         }
 
+        const tipoLabel = tipo === 'receber' ? 'receber' : (tipo === 'pagar' ? 'pagar' : 'misto');
         const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const backupPath = path.join(backupsDir, `financeiro-backup-${timestamp}.json`);
+        const backupPath = path.join(backupsDir, `financeiro-${tipoLabel}-backup-${timestamp}.json`);
 
         try {
             fs.writeFileSync(backupPath, JSON.stringify(rows, null, 2), 'utf8');
@@ -2376,10 +2386,196 @@ app.get('/clear-local-storage', (req, res) => {
     res.send(html);
 });
 
-// GET financial data by type (receber/pagar)
+// ========== ROTAS COM ID ESPECÍFICO (PUT, DELETE) - VÊM ANTES DA ROTA :tipo ==========
+
+// PUT update financial entry
+app.put('/api/financeiro/:id', (req, res) => {
+    const id = parseInt(req.params.id);
+    const entrada = req.body;
+
+    // Se tentando mudar status para 'pago', validar se é uma parcela
+    if ((entrada.status || '').toLowerCase() === 'pago') {
+        // Primeiro, buscar o registro atual para obter informações de parcela
+        db.get('SELECT * FROM transacoes WHERE id = ?', [id], (getErr, currentRecord) => {
+            if (getErr) {
+                res.status(500).json({ error: getErr.message });
+                return;
+            }
+            if (!currentRecord) {
+                res.status(404).json({ error: 'Registro não encontrado' });
+                return;
+            }
+
+            // Verificar se é uma parcela (numero_parcela > 1)
+            const numeroParcela = currentRecord.numero_parcela;
+            if (numeroParcela && numeroParcela > 1) {
+                // É uma parcela, verificar se a parcela anterior foi paga
+                const parcelaAnterior = numeroParcela - 1;
+                
+                // Buscar parcela anterior do mesmo grupo de parcelamento
+                const grupoParcelamentoId = currentRecord.grupo_parcelamento_id || currentRecord.grupoParcelamentoId;
+                const orcamentoId = currentRecord.orcamento_id || currentRecord.orcamentoId;
+                
+                // Montar query para encontrar parcela anterior
+                let queryParcelaAnterior = 'SELECT id, status FROM transacoes WHERE numero_parcela = ? AND ';
+                let paramsParcelaAnterior = [parcelaAnterior];
+                
+                if (grupoParcelamentoId) {
+                    queryParcelaAnterior += 'grupo_parcelamento_id = ?';
+                    paramsParcelaAnterior.push(grupoParcelamentoId);
+                } else if (orcamentoId) {
+                    queryParcelaAnterior += 'orcamento_id = ? AND numero_parcela = ?';
+                    paramsParcelaAnterior = [parcelaAnterior, orcamentoId, parcelaAnterior];
+                    queryParcelaAnterior = 'SELECT id, status FROM transacoes WHERE numero_parcela = ? AND orcamento_id = ?';
+                    paramsParcelaAnterior = [parcelaAnterior, orcamentoId];
+                } else {
+                    // Se não houver grupo de parcelamento ou orçamento, usar cliente_id
+                    queryParcelaAnterior += 'cliente_id = ?';
+                    paramsParcelaAnterior.push(currentRecord.cliente_id);
+                }
+
+                db.get(queryParcelaAnterior, paramsParcelaAnterior, (parcelErr, parcelaAnteriorRecord) => {
+                    if (parcelErr) {
+                        res.status(500).json({ error: parcelErr.message });
+                        return;
+                    }
+
+                    // Se encontrou parcela anterior e ela não está paga, bloquear
+                    if (parcelaAnteriorRecord && (parcelaAnteriorRecord.status || '').toLowerCase() !== 'pago') {
+                        res.status(409).json({ 
+                            error: 'Não é possível liquidar esta parcela. A parcela anterior ainda não foi totalmente paga.',
+                            details: {
+                                mensagem: `Parcela ${parcelaAnterior} deve ser paga antes de liquidar a parcela ${numeroParcela}`,
+                                parcelaAnterior: parcelaAnterior,
+                                statusParcelaAnterior: parcelaAnteriorRecord.status
+                            }
+                        });
+                        return;
+                    }
+
+                    // Parcela anterior está paga ou não existe, prosseguir com atualização
+                    proceedWithUpdate();
+                });
+            } else {
+                // Não é uma parcela ou é a primeira parcela, prosseguir
+                proceedWithUpdate();
+            }
+
+            function proceedWithUpdate() {
+                const sql = `UPDATE transacoes SET 
+                    status = ?,
+                    descricao = ?,
+                    observacoes = ?,
+                    data_pagamento = ?,
+                    grupo_parcelamento_id = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?`;
+
+                const params = [
+                    entrada.status || 'aberto',
+                    entrada.descricao || '',
+                    entrada.observacoes || '',
+                    entrada.dataPagamento || null,
+                    entrada.grupoParcelamentoId || null,
+                    id
+                ];
+
+                db.run(sql, params, function(err) {
+                    if (err) {
+                        res.status(500).json({ error: err.message });
+                        return;
+                    }
+                    if (this.changes === 0) {
+                        res.status(404).json({ error: 'Registro não encontrado' });
+                        return;
+                    }
+                    res.json({ id: String(id), ...entrada });
+                });
+            }
+        });
+    } else {
+        // Não é tentativa de marcar como pago, prosseguir normalmente
+        const sql = `UPDATE transacoes SET 
+            status = ?,
+            descricao = ?,
+            observacoes = ?,
+            data_pagamento = ?,
+            grupo_parcelamento_id = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`;
+
+        const params = [
+            entrada.status || 'aberto',
+            entrada.descricao || '',
+            entrada.observacoes || '',
+            entrada.dataPagamento || null,
+            entrada.grupoParcelamentoId || null,
+            id
+        ];
+
+        db.run(sql, params, function(err) {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            if (this.changes === 0) {
+                res.status(404).json({ error: 'Registro não encontrado' });
+                return;
+            }
+            res.json({ id: String(id), ...entrada });
+        });
+    }
+});
+
+// DELETE financial entry
+app.delete('/api/financeiro/:id', (req, res) => {
+    const receivedId = req.params.id;
+    console.log(`DELETE /api/financeiro/${receivedId} recebido`);
+    // Primeiro buscar o registro para retornar seu tipo/conteúdo
+    db.get('SELECT * FROM transacoes WHERE id = ?', [receivedId], (getErr, row) => {
+        if (getErr) {
+            res.status(500).json({ error: getErr.message, requestedId: receivedId });
+            return;
+        }
+        if (!row) {
+            res.status(404).json({ error: 'Registro não encontrado', requestedId: receivedId });
+            return;
+        }
+
+        // Guardar tipo e dados antes de deletar
+        const tipo = row.tipo || null;
+        const removedMapped = {
+            ...row,
+            id: row.id ? String(row.id) : null,
+            orcamentoId: row.orcamento_id,
+            clienteId: row.cliente_id,
+            formaPagamento: row.forma_pagamento,
+            dataPagamento: row.data_pagamento,
+            grupoParcelamentoId: row.grupo_parcelamento_id
+        };
+
+        db.run('DELETE FROM transacoes WHERE id = ?', [receivedId], function(delErr) {
+            if (delErr) {
+                res.status(500).json({ error: delErr.message, requestedId: receivedId });
+                return;
+            }
+            if (this.changes === 0) {
+                res.status(404).json({ error: 'Registro não encontrado', requestedId: receivedId });
+                return;
+            }
+
+            res.json({ success: true, deletedId: String(receivedId), tipo, removed: normalizeFinanceiroRow(removedMapped) });
+        });
+    });
+});
+
+// ========== ROTAS GENÉRICAS COM PARÂMETRO :tipo - VÊM DEPOIS DAS ROTAS :id ==========
+// NOTA: Esta rota deve vir DEPOIS das rotas de ID específicas para evitar conflito
 app.get('/api/financeiro/:tipo', (req, res) => {
     const tipo = req.params.tipo;
     if (!['receber', 'pagar'].includes(tipo)) {
+        // Se não for receber ou pagar, deixar passar para próximas rotas
+        // Retornar 404 apenas se for chamada
         res.status(400).json({ error: 'Tipo deve ser "receber" ou "pagar"' });
         return;
     }
@@ -2597,84 +2793,6 @@ app.post('/api/financeiro', (req, res) => {
             });
         });
     }
-});
-
-// PUT update financial entry
-app.put('/api/financeiro/:id', (req, res) => {
-    const id = parseInt(req.params.id);
-    const entrada = req.body;
-
-    const sql = `UPDATE transacoes SET 
-        status = ?,
-        descricao = ?,
-        observacoes = ?,
-        data_pagamento = ?,
-        grupo_parcelamento_id = ?,
-        updated_at = CURRENT_TIMESTAMP
-    WHERE id = ?`;
-
-    const params = [
-        entrada.status || 'aberto',
-        entrada.descricao || '',
-        entrada.observacoes || '',
-        entrada.dataPagamento || null,
-        entrada.grupoParcelamentoId || null,
-        id
-    ];
-
-    db.run(sql, params, function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        if (this.changes === 0) {
-            res.status(404).json({ error: 'Registro não encontrado' });
-            return;
-        }
-        res.json({ id: String(id), ...entrada });
-    });
-});
-
-// DELETE financial entry
-app.delete('/api/financeiro/:id', (req, res) => {
-    const receivedId = req.params.id;
-    console.log(`DELETE /api/financeiro/${receivedId} recebido`);
-    // Primeiro buscar o registro para retornar seu tipo/conteúdo
-    db.get('SELECT * FROM transacoes WHERE id = ?', [receivedId], (getErr, row) => {
-        if (getErr) {
-            res.status(500).json({ error: getErr.message, requestedId: receivedId });
-            return;
-        }
-        if (!row) {
-            res.status(404).json({ error: 'Registro não encontrado', requestedId: receivedId });
-            return;
-        }
-
-        // Guardar tipo e dados antes de deletar
-        const tipo = row.tipo || null;
-        const removedMapped = {
-            ...row,
-            id: row.id ? String(row.id) : null,
-            orcamentoId: row.orcamento_id,
-            clienteId: row.cliente_id,
-            formaPagamento: row.forma_pagamento,
-            dataPagamento: row.data_pagamento,
-            grupoParcelamentoId: row.grupo_parcelamento_id
-        };
-
-        db.run('DELETE FROM transacoes WHERE id = ?', [receivedId], function(delErr) {
-            if (delErr) {
-                res.status(500).json({ error: delErr.message, requestedId: receivedId });
-                return;
-            }
-            if (this.changes === 0) {
-                res.status(404).json({ error: 'Registro não encontrado', requestedId: receivedId });
-                return;
-            }
-
-            res.json({ success: true, deletedId: String(receivedId), tipo, removed: normalizeFinanceiroRow(removedMapped) });
-        });
-    });
 });
 
 // Iniciar servidor
