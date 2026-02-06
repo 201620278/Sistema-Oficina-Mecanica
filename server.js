@@ -4,6 +4,7 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
+const crypto = require('crypto');
 
 const app = express();
 const port = 3000;
