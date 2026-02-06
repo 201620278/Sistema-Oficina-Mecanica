@@ -347,6 +347,117 @@ function normalizeTransacao(row) {
     return normalized;
 }
 
+// ========== DETECÇÃO DO WHATSAPP ==========
+// Função para verificar se WhatsApp está instalado no sistema
+function whatsappEstaInstalado() {
+    try {
+        const os = require('os');
+        const path = require('path');
+        
+        console.log(`\n[DEBUG WhatsApp] Verificando instalação... (Platform: ${process.platform})`);
+        
+        // No Windows, procura o executável do WhatsApp em locais comuns
+        if (process.platform === 'win32') {
+            const username = os.userInfo().username;
+            const homeDir = os.homedir();
+            console.log(`[DEBUG WhatsApp] Username: ${username}`);
+            
+            // Locais onde WhatsApp pode estar instalado
+            const possiblePaths = [
+                // Instalação tradicional
+                path.join(homeDir, 'AppData', 'Local', 'WhatsApp'),
+                `C:\\Program Files\\WhatsApp`,
+                `C:\\Program Files (x86)\\WhatsApp`,
+                // Microsoft Store (AppData\Local\Packages)
+                path.join(homeDir, 'AppData', 'Local', 'Packages'),
+                // Roaming (algumas versões)
+                path.join(homeDir, 'AppData', 'Roaming'),
+            ];
+            
+            console.log(`[DEBUG WhatsApp] Verificando caminhos...`);
+            
+            // 1. Verificar instalação tradicional
+            const traditionalPath = path.join(homeDir, 'AppData', 'Local', 'WhatsApp');
+            console.log(`  1. Tradicional: ${traditionalPath}`);
+            if (fs.existsSync(traditionalPath)) {
+                const files = fs.readdirSync(traditionalPath);
+                console.log(`    ✓ Existe! Arquivos: ${files.slice(0, 3).join(', ')}`);
+                const hasExe = files.some(f => f === 'WhatsApp.exe' || f.startsWith('app-'));
+                if (hasExe) {
+                    console.log(`    ✓ ENCONTRADO (arquivo executável encontrado)`);
+                    return true;
+                }
+            }
+            
+            // 2. Verificar Program Files
+            const progFiles = [`C:\\Program Files\\WhatsApp`, `C:\\Program Files (x86)\\WhatsApp`];
+            for (const progPath of progFiles) {
+                console.log(`  2. ${progPath}`);
+                try {
+                    if (fs.existsSync(progPath)) {
+                        console.log(`    ✓ ENCONTRADO`);
+                        return true;
+                    }
+                } catch (e) {
+                    // ignorar
+                }
+            }
+            
+            // 3. Verificar Microsoft Store
+            const packagesPath = path.join(homeDir, 'AppData', 'Local', 'Packages');
+            console.log(`  3. Microsoft Store: ${packagesPath}`);
+            try {
+                if (fs.existsSync(packagesPath)) {
+                    const packages = fs.readdirSync(packagesPath);
+                    const whatsappPackage = packages.find(p => p.includes('WhatsApp') || p.includes('whatsapp'));
+                    if (whatsappPackage) {
+                        console.log(`    ✓ ENCONTRADO (Microsoft Store): ${whatsappPackage}`);
+                        return true;
+                    }
+                }
+            } catch (e) {
+                // ignorar
+            }
+            
+            console.log(`✗ WhatsApp NÃO ENCONTRADO em nenhum local comum`);
+            return false;
+        }
+        
+        // No macOS
+        if (process.platform === 'darwin') {
+            console.log(`  → /Applications/WhatsApp.app`);
+            try {
+                fs.statSync('/Applications/WhatsApp.app');
+                console.log(`  ✓ ENCONTRADO`);
+                return true;
+            } catch (e) {
+                console.log(`  ✗ Não encontrado`);
+                return false;
+            }
+        }
+        
+        // No Linux
+        if (process.platform === 'linux') {
+            console.log(`  → Verificando comando whatsapp`);
+            const { execSync } = require('child_process');
+            try {
+                execSync('which whatsapp', { stdio: 'ignore' });
+                console.log(`  ✓ ENCONTRADO`);
+                return true;
+            } catch (e) {
+                console.log(`  ✗ Não encontrado`);
+                return false;
+            }
+        }
+        
+        console.log(`✗ Plataforma desconhecida`);
+        return false;
+    } catch (error) {
+        console.error('❌ Erro ao verificar WhatsApp:', error.message);
+        return false;
+    }
+}
+
 // Rotas comentadas para teste
 /*
 app.get('/', (req, res) => {
@@ -356,6 +467,14 @@ app.get('/', (req, res) => {
 // GET endpoints
 ... [todo o resto dos endpoints] ...
 */
+
+// ========== ENDPOINT: DETECTAR WHATSAPP ==========
+// GET /api/whatsapp-status - Verifica se WhatsApp está instalado
+app.get('/api/whatsapp-status', (req, res) => {
+    const instalado = whatsappEstaInstalado();
+    console.log(`[WhatsApp Status] Instalado: ${instalado}, Platform: ${process.platform}`);
+    res.json({ whatsappInstalado: instalado, platform: process.platform });
+});
 
 // Iniciar servidor
 app.get('/api/clientes', (req, res) => {

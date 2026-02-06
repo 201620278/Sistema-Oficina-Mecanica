@@ -1302,33 +1302,39 @@
 
         window.storageReady = storageSync.ready;
 
-        // Helper para abrir WhatsApp: tenta esquema nativo e cai back para web.whatsapp.com
-        function openWhatsAppFallback(telefone, mensagem) {
+        // Helper para abrir WhatsApp: apenas app nativo (sem fallback para web)
+        async function openWhatsAppFallback(telefone, mensagem) {
             const tel = String(telefone || '').replace(/\D/g, '');
             if (!tel) {
                 alert('Telefone inválido para WhatsApp');
                 return;
             }
-            const msgEncoded = encodeURIComponent(mensagem || '');
 
-            // Tentar abrir app nativo via esquema
             try {
-                const appLink = `whatsapp://send?phone=55${tel}&text=${msgEncoded}`;
-                const a = document.createElement('a');
-                a.href = appLink;
-                a.style.display = 'none';
-                document.body.appendChild(a);
-                a.click();
-                document.body.removeChild(a);
-            } catch (e) {
-                // ignore
+                // Detectar se WhatsApp app está instalado no PC
+                const response = await fetch('/api/whatsapp-status');
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Status WhatsApp:', data);
+                    
+                    if (data.whatsappInstalado) {
+                        // Abrir APENAS o app nativo
+                        const msgEncoded = encodeURIComponent(mensagem || '');
+                        const appLink = `whatsapp://send?phone=55${tel}&text=${msgEncoded}`;
+                        console.log('Abrindo WhatsApp app:', appLink);
+                        window.location.href = appLink;
+                    } else {
+                        // WhatsApp não está instalado
+                        alert('❌ WhatsApp Desktop não está instalado no seu computador.\n\nPor favor, instale o WhatsApp Desktop em: https://www.whatsapp.com/download');
+                        console.warn('WhatsApp não detectado no sistema');
+                    }
+                } else {
+                    throw new Error('Erro ao verificar status do WhatsApp');
+                }
+            } catch (error) {
+                console.error('Erro ao verificar WhatsApp:', error);
+                alert('⚠️ Erro ao verificar se WhatsApp está instalado.\n\nErro: ' + error.message);
             }
-
-            // Fallback para web.whatsapp.com com texto pré-preenchido
-            setTimeout(() => {
-                const web = `https://web.whatsapp.com/send?phone=55${tel}&text=${msgEncoded}`;
-                window.open(web, '_blank');
-            }, 1100);
         }
 
         // Sistema de gerenciamento de estado
@@ -5186,6 +5192,9 @@ Obrigado pela confiança! 🙏`;
 
                 const os = this.dados.ordensServico.find(o => o.id === id);
                 if (!os) return;
+
+                // Garantir que a lista de veículos está atualizada
+                this.reconstruirListaVeiculos();
 
                 const cliente = this.dados.clientes.find(c => c.id === os.clienteId);
                 const veiculo = this.buscarVeiculoPorId(os.veiculoId);

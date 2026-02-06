@@ -3774,10 +3774,32 @@
             telefone = whatsappManager.formatarTelefone(telefone);
 
             if (telefone && mensagem) {
-                const link = whatsappManager.gerarLink(telefone, mensagem);
-                window.open(link, '_blank');
-                hideModal('modal-whatsapp');
-                showToast('WhatsApp aberto com sucesso!', 'success');
+                // Verificar se whatsApp está instalado para abrir o app
+                fetch('/api/whatsapp-status')
+                    .then(res => res.json())
+                    .then(data => {
+                        console.log('Status WhatsApp detectado:', data);
+                        
+                        if (data.whatsappInstalado) {
+                            // Abrir APENAS o app do WhatsApp nativo
+                            const linkApp = `whatsapp://send?phone=55${telefone}&text=${encodeURIComponent(mensagem)}`;
+                            console.log('Abrindo WhatsApp app:', linkApp);
+                            window.location.href = linkApp;
+                            // Fechar modal após abrir o app
+                            setTimeout(() => {
+                                hideModal('modal-whatsapp');
+                                showToast('WhatsApp aberto!', 'success');
+                            }, 500);
+                        } else {
+                            // WhatsApp não está instalado
+                            showToast('❌ WhatsApp Desktop não está instalado no seu computador. Instale em: https://www.whatsapp.com/download', 'error');
+                            console.warn('WhatsApp não detectado no sistema');
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Erro ao verificar WhatsApp:', err);
+                        showToast('⚠️ Erro ao verificar se WhatsApp está instalado: ' + err.message, 'error');
+                    });
             } else {
                 showToast('Telefone ou mensagem inválidos', 'error');
             }
