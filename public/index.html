@@ -439,11 +439,10 @@
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
                     <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
                         <label><strong>Filtros:</strong></label>
-                        <button class="btn btn-sm" id="filtro-orcamento-pendentes" onclick="sistema.aplicarFiltroOrcamento('pendentes')">Pendentes</button>
-                        <button class="btn btn-sm btn-admin" onclick="showModal('modal-admin-login')">Login Admin</button>
+                        <button class="btn btn-sm" id="filtro-orcamento-pendentes" onclick="sistema.aplicarFiltroOrcamento('pendentes')" style="background: var(--primary-color); color: white;">Pendentes</button>
                         <button class="btn btn-sm" id="filtro-orcamento-aprovados" onclick="sistema.aplicarFiltroOrcamento('aprovados')">Aprovados</button>
                         <button class="btn btn-sm" id="filtro-orcamento-finalizados" onclick="sistema.aplicarFiltroOrcamento('finalizados')">Finalizados</button>
-                        <button class="btn btn-sm" id="filtro-orcamento-todos" onclick="sistema.aplicarFiltroOrcamento('todos')" style="background: var(--primary-color); color: white;">Todos</button>
+                        <button class="btn btn-sm" id="filtro-orcamento-todos" onclick="sistema.aplicarFiltroOrcamento('todos')">Todos</button>
                     </div>
                 </div>
 
@@ -514,10 +513,10 @@
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
                     <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
                         <label><strong>Filtros:</strong></label>
-                        <button class="btn btn-sm" id="filtro-os-pendente" onclick="sistema.aplicarFiltroOS('pendente')">Pendente</button>
+                        <button class="btn btn-sm" id="filtro-os-pendente" onclick="sistema.aplicarFiltroOS('pendente')" style="background: var(--primary-color); color: white;">Pendente</button>
                         <button class="btn btn-sm" id="filtro-os-em-servico" onclick="sistema.aplicarFiltroOS('em-servico')">Em Serviço</button>
                         <button class="btn btn-sm" id="filtro-os-finalizada" onclick="sistema.aplicarFiltroOS('finalizada')">Finalizada</button>
-                        <button class="btn btn-sm" id="filtro-os-todos" onclick="sistema.aplicarFiltroOS('todos')" style="background: var(--primary-color); color: white;">Todos</button>
+                        <button class="btn btn-sm" id="filtro-os-todos" onclick="sistema.aplicarFiltroOS('todos')">Todos</button>
                     </div>
                 </div>
 
@@ -572,10 +571,10 @@
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
                     <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center;">
                         <label><strong>Filtros:</strong></label>
-                        <button class="btn btn-sm" id="filtro-agendamento-pendente" onclick="sistema.aplicarFiltroAgendamento('pendente')">Pendente</button>
+                        <button class="btn btn-sm" id="filtro-agendamento-pendente" onclick="sistema.aplicarFiltroAgendamento('pendente')" style="background: var(--primary-color); color: white;">Pendente</button>
                         <button class="btn btn-sm" id="filtro-agendamento-em-servico" onclick="sistema.aplicarFiltroAgendamento('em-servico')">Em Serviço</button>
                         <button class="btn btn-sm" id="filtro-agendamento-finalizado" onclick="sistema.aplicarFiltroAgendamento('finalizado')">Finalizado</button>
-                        <button class="btn btn-sm" id="filtro-agendamento-todos" onclick="sistema.aplicarFiltroAgendamento('todos')" style="background: var(--primary-color); color: white;">Todos</button> </div>
+                        <button class="btn btn-sm" id="filtro-agendamento-todos" onclick="sistema.aplicarFiltroAgendamento('todos')">Todos</button> </div>
                 </div>
 
                 <div class="cards-grid">
@@ -3509,8 +3508,11 @@
                 this.atualizarDashboard();
                 this.atualizarClientes();
                 this.atualizarVeiculos();
+                this.aplicarFiltroOrcamento('pendentes');
                 this.atualizarOrcamentos();
+                this.aplicarFiltroAgendamento('pendente');
                 this.atualizarAgendamentos();
+                this.aplicarFiltroOS('pendente');
                 this.atualizarOrdensServico();
                 this.atualizarServicos();
                 this.atualizarFinanceiro(); // <-- adicionado
@@ -5362,6 +5364,7 @@ Obrigado pela confiança! 🙏`;
 
                         // Atualizar dados específicos da seção
                         if (sectionId === 'orcamentos') {
+                            this.aplicarFiltroOrcamento('pendentes');
                             this.atualizarOrcamentos();
                         }
 
@@ -5370,7 +5373,13 @@ Obrigado pela confiança! 🙏`;
                         }
 
                         if (sectionId === 'agendamentos') {
+                            this.aplicarFiltroAgendamento('pendente');
                             this.atualizarAgendamentos();
+                        }
+
+                        if (sectionId === 'ordens-servico') {
+                            this.aplicarFiltroOS('pendente');
+                            this.atualizarOrdensServico();
                         }
                     });
                 });

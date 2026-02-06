@@ -8,8 +8,6 @@ const fs = require('fs');
 const app = express();
 const port = 3000;
 
-const crypto = require('crypto');
-
 // In-memory store for admin tokens (simple implementation)
 const adminTokens = new Set();
 
@@ -95,7 +93,7 @@ const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CR
 });
 
 // Evitar que a conexão feche antes de usar
-db.configure('busyTimeout', 30000);
+// db.configure('busyTimeout', 30000);
 
 // Inicializar tabelas do banco de dados
 function inicializarBanco() {
@@ -349,12 +347,17 @@ function normalizeTransacao(row) {
     return normalized;
 }
 
-// Rotas para servir arquivos estáticos
+// Rotas comentadas para teste
+/*
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
 // GET endpoints
+... [todo o resto dos endpoints] ...
+*/
+
+// Iniciar servidor
 app.get('/api/clientes', (req, res) => {
     db.all('SELECT * FROM clientes WHERE ativo = 1 ORDER BY id DESC', [], (err, rows) => {
         if (err) {
@@ -2302,6 +2305,7 @@ function normalizeFinanceiroRow(row) {
 // Endpoints para dados financeiros (receber/pagar)
 // GET all financial data
 app.get('/api/financeiro', (req, res) => {
+    console.log('GET /api/financeiro chamado');
     db.all(`SELECT 
         id, descricao, tipo, valor, data, status, orcamento_id, cliente_id, 
         numero_parcela, total_parcelas, forma_pagamento, vencimento, data_pagamento,
@@ -2309,6 +2313,7 @@ app.get('/api/financeiro', (req, res) => {
     FROM transacoes 
     WHERE tipo IN ('receber', 'pagar') 
     ORDER BY data DESC`, [], (err, rows) => {
+        console.log('db.all callback chamado, err:', err, 'rows length:', rows ? rows.length : 'null');
         if (err) {
             console.error('Erro ao buscar do SQLite:', err.message);
             res.status(500).json({ error: 'Erro interno ao buscar registros' });
@@ -2317,18 +2322,24 @@ app.get('/api/financeiro', (req, res) => {
 
         // Converter IDs para string e normalizar valores/vencimentos
         const dados = rows.map(row => {
-            const mapped = {
-                ...row,
-                id: String(row.id),
-                orcamentoId: row.orcamento_id,
-                clienteId: row.cliente_id,
-                formaPagamento: row.forma_pagamento,
-                dataPagamento: row.data_pagamento,
-                grupoParcelamentoId: row.grupo_parcelamento_id
-            };
-            return normalizeFinanceiroRow(mapped);
+            try {
+                const mapped = {
+                    ...row,
+                    id: String(row.id),
+                    orcamentoId: row.orcamento_id,
+                    clienteId: row.cliente_id,
+                    formaPagamento: row.forma_pagamento,
+                    dataPagamento: row.data_pagamento,
+                    grupoParcelamentoId: row.grupo_parcelamento_id
+                };
+                return normalizeFinanceiroRow(mapped);
+            } catch (e) {
+                console.error('Erro ao normalizar row:', e, row);
+                return row;
+            }
         });
 
+        console.log('Enviando resposta com', dados.length, 'registros');
         res.json(dados);
     });
 });
@@ -2392,6 +2403,7 @@ app.get('/clear-local-storage', (req, res) => {
 app.put('/api/financeiro/:id', (req, res) => {
     const id = parseInt(req.params.id);
     const entrada = req.body;
+    console.log(`PUT /api/financeiro/${req.params.id} recebido. body:`, entrada);
 
     // Se tentando mudar status para 'pago', validar se é uma parcela
     if ((entrada.status || '').toLowerCase() === 'pago') {
@@ -2402,7 +2414,8 @@ app.put('/api/financeiro/:id', (req, res) => {
                 return;
             }
             if (!currentRecord) {
-                res.status(404).json({ error: 'Registro não encontrado' });
+                console.warn(`Registro não encontrado no DB para id=${id}`);
+                res.status(404).json({ error: 'Registro não encontrado', id: String(id) });
                 return;
             }
 
@@ -2796,7 +2809,12 @@ app.post('/api/financeiro', (req, res) => {
 });
 
 // Iniciar servidor
-app.listen(port, 'localhost', () => {
+const server = app.listen(port, (err) => {
+    if (err) {
+        console.error('Erro ao iniciar servidor:', err);
+        process.exit(1);
+    }
     console.log(`Servidor rodando em http://localhost:${port}`);
     console.log(`Banco de dados local: ${dbPath}`);
+    console.log('Callback do app.listen executado');
 });

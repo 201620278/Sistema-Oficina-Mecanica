@@ -697,7 +697,7 @@
             <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">
                 <button class="btn btn-secondary" onclick="hideModal('modal-visualizar-duplicata')">Fechar</button>
                 <button class="btn btn-whatsapp" onclick="ui.enviarWhatsAppDuplicata(ui.duplicataAtual.id)">Enviar WhatsApp</button>
-                <button class="btn btn-success" onclick="ui.marcarComoPago(ui.duplicataAtual.id)">Marcar como pago</button>
+                <button id="btn-marcar-pago-visualizar" class="btn btn-success" onclick="ui.marcarComoPago(ui.duplicataAtual.id)">Marcar como pago</button>
                 <button class="btn btn-primary" onclick="(function(){ try { whatsappManager.abrirReciboImprimivel(ui.clienteAtual, ui.duplicataAtual); } catch(e){ console.warn(e); } })()">Imprimir / Recibo</button>
             </div>
         </div>
@@ -2468,39 +2468,48 @@
                     // Salva local (IndexedDB / localStorage)
                     await this.db.put('receber', duplicata);
 
-                    // >>> NOVO: sincronizar com o servidor <<<
-                    try {
-                        const resp = await fetch(`/api/financeiro/${duplicata.id}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                status: 'pago',
-                                dataPagamento: duplicata.dataPagamento,
-                                descricao: duplicata.descricao || '',
-                                observacoes: duplicata.observacoes || '',
-                                grupoParcelamentoId: duplicata.grupoParcelamentoId || null
-                            })
-                        });
+                    // Sincronizar com o servidor somente se este registro já existir no servidor
+                    // (IDs do servidor são numéricos). Para IDs locais, `this.db.put` já
+                    // enfileira a operação para sincronização posterior.
+                    const isServerId = /^\d+$/.test(String(duplicata.id));
+                    if (isServerId && navigator.onLine) {
+                        try {
+                            const resp = await fetch(`/api/financeiro/${duplicata.id}`, {
+                                method: 'PUT',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    status: 'pago',
+                                    dataPagamento: duplicata.dataPagamento,
+                                    descricao: duplicata.descricao || '',
+                                    observacoes: duplicata.observacoes || '',
+                                    grupoParcelamentoId: duplicata.grupoParcelamentoId || null
+                                })
+                            });
 
-                        if (!resp.ok) {
-                            const errorData = await resp.json().catch(() => ({}));
-                            console.error('Erro API ao marcar pago', errorData);
-                            
-                            // Se foi erro 409 (conflito), é a validação de parcelas
-                            if (resp.status === 409 && errorData.details) {
-                                showToast(`❌ ${errorData.details.mensagem}`, 'error');
-                                // Reverter o status local
-                                duplicata.status = 'aberto';
-                                delete duplicata.dataPagamento;
-                                await this.db.put('receber', duplicata);
-                                return;
+                            if (!resp.ok) {
+                                const errorData = await resp.json().catch(() => ({}));
+                                console.error('Erro API ao marcar pago', errorData);
+
+                                // Se foi erro 409 (conflito), é a validação de parcelas
+                                if (resp.status === 409 && errorData.details) {
+                                    showToast(`❌ ${errorData.details.mensagem}`, 'error');
+                                    // Reverter o status local
+                                    duplicata.status = 'aberto';
+                                    delete duplicata.dataPagamento;
+                                    await this.db.put('receber', duplicata);
+                                    return;
+                                }
+
+                                showToast('Registro pago localmente, mas falhou ao atualizar no servidor!', 'warning');
                             }
-                            
-                            showToast('Registro pago localmente, mas falhou ao atualizar no servidor!', 'warning');
+                        } catch (err) {
+                            console.warn('Falha na comunicação com servidor ao marcar pago', err);
+                            showToast('Sem conexão com o servidor. Pagamento salvo localmente apenas.', 'warning');
                         }
-                    } catch (err) {
-                        console.warn('Falha na comunicação com servidor ao marcar pago', err);
-                        showToast('Sem conexão com o servidor. Pagamento salvo localmente apenas.', 'warning');
+                    } else {
+                        // ID local: já enfileirado por this.db.put; informar usuário claramente
+                        console.log('ID local detectado, operação enfileirada para sincronização posterior:', duplicata.id);
+                        showToast('Pagamento salvo localmente. Será sincronizado quando online.', 'info');
                     }
 
                     // Opcional: recibo
@@ -2595,6 +2604,16 @@
                     try {
                         if (cliente) cliente._telefoneParaWhats = whatsappManager.obterTelefoneCliente(cliente);
                     } catch (e) {}
+
+                    // Desabilitar o botão de marcar como pago se já estiver pago
+                    try {
+                        const btn = document.getElementById('btn-marcar-pago-visualizar');
+                        if (btn) {
+                            const isPago = String(duplicata.status || '').toLowerCase() === 'pago';
+                            btn.disabled = !!isPago;
+                            if (isPago) btn.classList.add('disabled'); else btn.classList.remove('disabled');
+                        }
+                    } catch (e) { /* ignore */ }
 
                     showModal('modal-visualizar-duplicata');
                 } catch (err) {
