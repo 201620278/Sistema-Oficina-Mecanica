@@ -594,24 +594,24 @@
                     <div id="campos-entrada" class="hidden">
                         <div class="form-row">
                             <div class="form-group">
-                                <label for="valor-entrada">Valor da Entrada (R$) *</label>
-                                <input type="number" id="valor-entrada" step="0.01" min="0" 
+                                <label for="valor-entrada-receber">Valor da Entrada (R$) *</label>
+                                <input type="number" id="valor-entrada-receber" step="0.01" min="0" 
                                        placeholder="0,00"
                                        oninput="calcularParcelasEntrada()"
                                        onchange="calcularParcelasEntrada()">
                             </div>
                             <div class="form-group">
-                                <label for="numero-parcelas-entrada">Número de Parcelas *</label>
-                                <input type="number" id="numero-parcelas-entrada" min="1" max="24" value="1" 
+                                <label for="numero-parcelas-entrada-receber">Número de Parcelas *</label>
+                                <input type="number" id="numero-parcelas-entrada-receber" min="1" max="24" value="1" 
                                        onchange="calcularParcelasEntrada()">
                             </div>
                             <div class="form-group">
-                                <label for="data-primeira-parcela-entrada">Data da 1ª Parcela *</label>
-                                <input type="date" id="data-primeira-parcela-entrada" onchange="calcularParcelasEntrada()">
+                                <label for="data-primeira-parcela-entrada-receber">Data da 1ª Parcela *</label>
+                                <input type="date" id="data-primeira-parcela-entrada-receber" onchange="calcularParcelasEntrada()">
                             </div>
                         </div>
                         
-                        <div id="tabela-entrada-parcelas" class="hidden">
+                        <div id="tabela-entrada-parcelas-receber" class="hidden">
                             <h4>Plano de Pagamento</h4>
                             <table class="data-table">
                                 <thead>
@@ -621,7 +621,7 @@
                                         <th>Valor</th>
                                     </tr>
                                 </thead>
-                                <tbody id="lista-entrada-parcelas">
+                                <tbody id="lista-entrada-parcelas-receber">
                                 </tbody>
                             </table>
                         </div>
@@ -699,7 +699,7 @@
     <div id="modal-visualizar-fornecedor" class="modal">
         <div class="modal-content" style="max-width:600px">
             <div class="modal-header">
-                <h3>Visualizar Fornecedor</h3>
+                <h3>Resumo da Parcela</h3>
                 <button class="modal-close" onclick="hideModal('modal-visualizar-fornecedor')">&times;</button>
             </div>
             <div class="modal-body">
@@ -728,17 +728,32 @@
                 <div class="form-row">
                     <div class="form-group" style="flex:1">
                         <label>Valor</label>
-                        <div id="vis-forn-valor"></div>
+                        <div id="vis-forn-valor" style="font-weight:600;color:#27ae60"></div>
                     </div>
                     <div class="form-group" style="flex:1">
                         <label>Status</label>
                         <div id="vis-forn-status"></div>
                     </div>
                 </div>
+                <div id="vis-forn-entrada-container" class="form-group hidden">
+                    <label>Valor da Entrada</label>
+                    <div id="vis-forn-valor-entrada" style="font-weight:600;color:#27ae60"></div>
+                </div>
+                <div id="vis-forn-qtd-parcelas-container" class="form-group hidden">
+                    <label>Quantidade de Parcelas</label>
+                    <div id="vis-forn-quantidade-parcelas"></div>
+                </div>
+                <div class="form-group hidden" id="vis-forn-observacoes-container">
+                    <label>Observações</label>
+                    <div id="vis-forn-observacoes"></div>
+                </div>
             </div>
             <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">
+                <button class="btn btn-danger" onclick="ui.deletarPagamento(ui.contaPagarAtual.id)">
+                    <i class="fas fa-trash"></i> Deletar
+                </button>
                 <button class="btn btn-secondary" onclick="hideModal('modal-visualizar-fornecedor')">Fechar</button>
-                <button class="btn btn-success" onclick="ui.marcarComoPagoPagar(ui.contaPagarAtual.id)">Marcar como pago</button>
+                <button class="btn btn-success" id="btn-marcar-pago-forn" onclick="ui.marcarComoPagoPagar(ui.contaPagarAtual.id)">Marcar como pago</button>
             </div>
         </div>
     </div>
@@ -762,24 +777,40 @@
                         <input type="text" id="descricao-pagar" required>
                     </div>
                     
+                    <div class="form-group">
+                        <label for="tipo-pagar">Tipo</label>
+                        <select id="tipo-pagar" onchange="toggleQuantidadeParcelas(); setTimeout(atualizarDetalhamentoParcelas, 100);">
+                            <option value="normal">Pag. a vista</option>
+                            <option value="parcelado">Parcelado</option>
+                            <option value="entrada-parcelado">Entrada + Parcelamento</option>
+                        </select>
+                    </div>
+                    
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="valor-pagar">Valor *</label>
-                            <input type="number" id="valor-pagar" step="0.01" min="0.01" required>
+                            <label for="valor-pagar">Valor Total *</label>
+                            <input type="number" id="valor-pagar" step="0.01" min="0.01" required onchange="atualizarDetalhamentoParcelas()" oninput="atualizarDetalhamentoParcelas()">
                         </div>
                         
-                        <div class="form-group">
-                            <label for="vencimento-pagar">Vencimento *</label>
-                            <input type="date" id="vencimento-pagar" required>
+                        <div class="form-group" id="campo-entrada-pagar" style="display: none;">
+                            <label for="valor-entrada">Valor da Entrada *</label>
+                            <input type="number" id="valor-entrada" step="0.01" min="0.01" onchange="atualizarDetalhamentoParcelas()" oninput="atualizarDetalhamentoParcelas()" placeholder="Valor em R$">
+                        </div>
+                        
+                        <div class="form-group" id="campo-quantidade-parcelas" style="display: none;">
+                            <label for="quantidade-parcelas">Quantidade de Parcelas *</label>
+                            <input type="number" id="quantidade-parcelas" min="1" max="120" step="1" onchange="atualizarDetalhamentoParcelas()" oninput="atualizarDetalhamentoParcelas()">
                         </div>
                     </div>
                     
                     <div class="form-group">
-                        <label for="tipo-pagar">Tipo</label>
-                        <select id="tipo-pagar">
-                            <option value="normal">Normal</option>
-                            <option value="parcelado">Parcelado</option>
-                        </select>
+                        <label for="vencimento-pagar">Vencimento *</label>
+                        <input type="date" id="vencimento-pagar" required onchange="atualizarDetalhamentoParcelas()">
+                    </div>
+                    
+                    <div id="detalhamento-parcelas-pagar" style="display: none; margin-top: 15px; padding: 12px; background-color: #f8f9fa; border-radius: 6px; border-left: 4px solid #e74c3c;">
+                        <label style="font-weight: bold; color: #2c3e50; display: block; margin-bottom: 10px;">Detalhamento das Parcelas:</label>
+                        <div id="lista-parcelas-pagar" style="max-height: 200px; overflow-y: auto;"></div>
                     </div>
                     
                     <div class="form-group">
@@ -796,6 +827,68 @@
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal Resumo Parcela -->
+    <div id="modal-resumo-parcela" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="resumo-parcela-titulo">Resumo da Parcela</h3>
+                <button class="modal-close" onclick="hideModal('modal-resumo-parcela')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="resumo-parcela-container">
+                    <input type="hidden" id="resumo-parcela-id">
+                    <div class="resumo-row">
+                        <label>Fornecedor:</label>
+                        <span id="resumo-fornecedor"></span>
+                    </div>
+                    <div class="resumo-row">
+                        <label>Descrição:</label>
+                        <span id="resumo-descricao"></span>
+                    </div>
+                    <div class="resumo-row">
+                        <label>Parcela:</label>
+                        <span id="resumo-parcela"></span>
+                    </div>
+                    <div class="resumo-row">
+                        <label>Valor:</label>
+                        <span id="resumo-valor" class="valor-destaque"></span>
+                    </div>
+                    <div class="resumo-row">
+                        <label>Vencimento:</label>
+                        <span id="resumo-vencimento"></span>
+                    </div>
+                    <div class="resumo-row">
+                        <label>Status:</label>
+                        <span id="resumo-status"></span>
+                    </div>
+                    <div id="resumo-entrada-container" class="resumo-row hidden">
+                        <label>Valor da Entrada:</label>
+                        <span id="resumo-valor-entrada" class="valor-destaque"></span>
+                    </div>
+                    <div id="resumo-quantidade-parcelas-container" class="resumo-row hidden">
+                        <label>Quantidade de Parcelas:</label>
+                        <span id="resumo-quantidade-parcelas"></span>
+                    </div>
+                    <div class="resumo-row">
+                        <label>Observações:</label>
+                        <span id="resumo-observacoes"></span>
+                    </div>
+                </input>
+                <div class="modal-actions">
+                    <button class="btn btn-success" onclick="ui.marcarComoPagoPagarDoResumo()" id="btn-marcar-pago">
+                        <i class="fas fa-check"></i> Marcar como Pago
+                    </button>
+                    <button class="btn btn-danger" onclick="ui.deletarPagamento(document.getElementById('resumo-parcela-id').value)" id="btn-deletar">
+                        <i class="fas fa-trash"></i> Deletar
+                    </button>
+                    <button class="btn btn-secondary" onclick="hideModal('modal-resumo-parcela')">
+                        Fechar
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -2296,14 +2389,14 @@
                 
                 pagar.forEach(item => {
                     html += `
-                        <tr>
+                        <tr onclick="ui.visualizarFornecedor('${item.id}')">
                             <td>${item.fornecedor}</td>
                             <td>${item.descricao}</td>
                             <td>${item.parcela || '1/1'}</td>
                             <td>R$ ${item.valor.toFixed(2)}</td>
                             <td>${this.formatarData(item.vencimento)}</td>
                             <td>${this.criarBadgeStatus(item)}</td>
-                            <td>
+                            <td onclick="event.stopPropagation();">
                                 <button class="btn btn-success btn-sm" onclick="ui.marcarComoPagoPagar('${item.id}')">
                                     <i class="fas fa-check"></i>
                                 </button>
@@ -2533,10 +2626,28 @@
                     showToast('Conta marcada como paga!', 'success');
                     this.carregarPagar();
                     this.carregarDadosDashboard();
+                    hideModal('modal-resumo-parcela');
                     
                 } catch (error) {
                     console.error('Erro ao marcar como pago:', error);
                     showToast('Erro ao marcar como pago', 'error');
+                }
+            }
+
+            async deletarPagamento(id) {
+                if (!confirm('Tem certeza que deseja deletar este pagamento?')) {
+                    return;
+                }
+                
+                try {
+                    await this.db.delete('pagar', id);
+                    showToast('Pagamento deletado com sucesso!', 'success');
+                    this.carregarPagar();
+                    this.carregarDadosDashboard();
+                    hideModal('modal-visualizar-fornecedor');
+                } catch (error) {
+                    console.error('Erro ao deletar pagamento:', error);
+                    showToast('Erro ao deletar pagamento', 'error');
                 }
             }
 
@@ -2624,14 +2735,52 @@
                     this.contaPagarAtual = contaPagar;
                     this.fornecedorAtual = fornecedor;
 
-                    // preencher modal de visualização
-                    document.getElementById('vis-forn-nome').innerText = fornecedor && fornecedor.nome ? fornecedor.nome : (contaPagar.fornecedor || '—');
+                    // Preencher modal de visualização
+                    // Usar o nome do fornecedor salvo diretamente na conta a pagar
+                    const nomeFornecedor = contaPagar.fornecedor || (fornecedor && fornecedor.nome) || '—';
+                    document.getElementById('vis-forn-nome').innerText = nomeFornecedor;
                     document.getElementById('vis-forn-telefone').innerText = fornecedor && (fornecedor.telefone || fornecedor.whatsapp) ? (fornecedor.telefone || fornecedor.whatsapp) : '';
                     document.getElementById('vis-forn-descricao').innerText = contaPagar.descricao || '';
-                    document.getElementById('vis-forn-parcela').innerText = contaPagar.parcela || '';
+                    document.getElementById('vis-forn-parcela').innerText = contaPagar.parcela || '1/1';
                     document.getElementById('vis-forn-vencimento').innerText = this.formatarData(contaPagar.vencimento);
                     document.getElementById('vis-forn-valor').innerText = this.formatarMoeda(Number(contaPagar.valor || 0));
                     document.getElementById('vis-forn-status').innerHTML = this.criarBadgeStatus(contaPagar);
+
+                    // Mostrar campos de entrada e quantidade de parcelas se existirem
+                    const containerEntrada = document.getElementById('vis-forn-entrada-container');
+                    const containerQtdParcelas = document.getElementById('vis-forn-qtd-parcelas-container');
+                    const containerObservacoes = document.getElementById('vis-forn-observacoes-container');
+                    
+                    if (contaPagar.valorEntrada) {
+                        containerEntrada.classList.remove('hidden');
+                        document.getElementById('vis-forn-valor-entrada').innerText = this.formatarMoeda(Number(contaPagar.valorEntrada || 0));
+                    } else {
+                        containerEntrada.classList.add('hidden');
+                    }
+                    
+                    if (contaPagar.quantidadeParcelas) {
+                        containerQtdParcelas.classList.remove('hidden');
+                        document.getElementById('vis-forn-quantidade-parcelas').innerText = contaPagar.quantidadeParcelas;
+                    } else {
+                        containerQtdParcelas.classList.add('hidden');
+                    }
+                    
+                    if (contaPagar.observacoes) {
+                        containerObservacoes.classList.remove('hidden');
+                        document.getElementById('vis-forn-observacoes').innerText = contaPagar.observacoes;
+                    } else {
+                        containerObservacoes.classList.add('hidden');
+                    }
+
+                    // Habilitar/desabilitar botão de marcar como pago
+                    const btnMarcarPago = document.getElementById('btn-marcar-pago-forn');
+                    if (contaPagar.status === 'pago') {
+                        btnMarcarPago.disabled = true;
+                        btnMarcarPago.innerHTML = '✓ Já marcado como pago';
+                    } else {
+                        btnMarcarPago.disabled = false;
+                        btnMarcarPago.innerHTML = 'Marcar como pago';
+                    }
 
                     showModal('modal-visualizar-fornecedor');
                 } catch (err) {
@@ -2904,16 +3053,16 @@
                     document.getElementById('tabela-parcelas').classList.remove('hidden');
                     
                 } else if (tipoPagamento === 'entrada') {
-                    const valorEntrada = parseFloat(document.getElementById('valor-entrada').value) || 0;
-                    const numParcelas = parseInt(document.getElementById('numero-parcelas-entrada').value) || 1;
-                    const dataPrimeira = document.getElementById('data-primeira-parcela-entrada').value;
+                    const valorEntrada = parseFloat(document.getElementById('valor-entrada-receber').value) || 0;
+                    const numParcelas = parseInt(document.getElementById('numero-parcelas-entrada-receber').value) || 1;
+                    const dataPrimeira = document.getElementById('data-primeira-parcela-entrada-receber').value;
                     
                     if (!this.orcamentoAtual) return;
                     
                     const valorTotal = this.orcamentoAtual.valorTotal;
                     
                     if (valorEntrada <= 0) {
-                        document.getElementById('tabela-entrada-parcelas').classList.add('hidden');
+                        document.getElementById('tabela-entrada-parcelas-receber').classList.add('hidden');
                         return;
                     }
                     
@@ -2921,7 +3070,7 @@
                         // Definir data padrão se não estiver definida
                         const data30dias = new Date();
                         data30dias.setDate(data30dias.getDate() + 30);
-                        document.getElementById('data-primeira-parcela-entrada').value = data30dias.toISOString().split('T')[0];
+                        document.getElementById('data-primeira-parcela-entrada-receber').value = data30dias.toISOString().split('T')[0];
                         return;
                     }
                     
@@ -2929,12 +3078,12 @@
                     
                     if (valorRestante < 0) {
                         showToast('O valor da entrada não pode ser maior que o valor total!', 'error');
-                        document.getElementById('tabela-entrada-parcelas').classList.add('hidden');
+                        document.getElementById('tabela-entrada-parcelas-receber').classList.add('hidden');
                         return;
                     }
                     
                     const valorParcela = numParcelas > 0 ? valorRestante / numParcelas : 0;
-                    const tbody = document.getElementById('lista-entrada-parcelas');
+                    const tbody = document.getElementById('lista-entrada-parcelas-receber');
                     tbody.innerHTML = '';
                     
                     // Entrada
@@ -2975,12 +3124,90 @@
                     `;
                     tbody.appendChild(trTotal);
                     
-                    document.getElementById('tabela-entrada-parcelas').classList.remove('hidden');
+                    document.getElementById('tabela-entrada-parcelas-receber').classList.remove('hidden');
                 }
             }
 
             calcularParcelasEntrada() {
                 this.calcularParcelas();
+            }
+
+            gerarParcelasPagarParaSalvar(fornecedor, descricao, valor, vencimento, tipo, quantidadeParcelas, observacoes) {
+                const parcelas = [];
+                const dataPrimeira = new Date(vencimento);
+                
+                if (tipo === 'parcelado') {
+                    const valorParcela = valor / quantidadeParcelas;
+                    
+                    for (let i = 1; i <= quantidadeParcelas; i++) {
+                        const dataVencimento = new Date(dataPrimeira);
+                        dataVencimento.setMonth(dataVencimento.getMonth() + (i - 1));
+                        
+                        parcelas.push({
+                            id: `pagar-${Date.now()}-${i}`,
+                            fornecedor: fornecedor,
+                            descricao: descricao,
+                            valor: Number(valorParcela.toFixed(2)),
+                            vencimento: dataVencimento.toISOString().split('T')[0],
+                            status: 'aberto',
+                            tipo: 'parcelado',
+                            parcela: `${i}/${quantidadeParcelas}`,
+                            quantidadeParcelas: quantidadeParcelas,
+                            data: new Date().toISOString().split('T')[0],
+                            observacoes: observacoes || ''
+                        });
+                    }
+                    
+                } else if (tipo === 'entrada-parcelado') {
+                    const valorEntrada = parseFloat(document.getElementById('valor-entrada').value) || 0;
+                    const valorRestante = valor - valorEntrada;
+                    const valorParcela = quantidadeParcelas > 0 ? valorRestante / quantidadeParcelas : 0;
+                    
+                    // Salvar entrada com status pago (hoje)
+                    if (valorEntrada > 0) {
+                        parcelas.push({
+                            id: `pagar-${Date.now()}-entrada`,
+                            fornecedor: fornecedor,
+                            descricao: descricao,
+                            valor: Number(valorEntrada.toFixed(2)),
+                            vencimento: new Date().toISOString().split('T')[0],
+                            status: 'pago',
+                            tipo: 'entrada-parcelado',
+                            parcela: 'Entrada',
+                            quantidadeParcelas: quantidadeParcelas,
+                            valorEntrada: Number(valorEntrada.toFixed(2)),
+                            dataPagamento: new Date().toISOString().split('T')[0],
+                            data: new Date().toISOString().split('T')[0],
+                            observacoes: observacoes || ''
+                        });
+                    }
+                    
+                    // Salvar parcelas restantes
+                    const dataProximaMes = new Date(dataPrimeira);
+                    dataProximaMes.setMonth(dataProximaMes.getMonth() + 1);
+                    
+                    for (let i = 1; i <= quantidadeParcelas; i++) {
+                        const dataVencimento = new Date(dataProximaMes);
+                        dataVencimento.setMonth(dataVencimento.getMonth() + (i - 1));
+                        
+                        parcelas.push({
+                            id: `pagar-${Date.now()}-${i}`,
+                            fornecedor: fornecedor,
+                            descricao: descricao,
+                            valor: Number(valorParcela.toFixed(2)),
+                            vencimento: dataVencimento.toISOString().split('T')[0],
+                            status: 'aberto',
+                            tipo: 'entrada-parcelado',
+                            parcela: `${i}/${quantidadeParcelas}`,
+                            quantidadeParcelas: quantidadeParcelas,
+                            valorEntrada: Number(valorEntrada.toFixed(2)),
+                            data: new Date().toISOString().split('T')[0],
+                            observacoes: observacoes || ''
+                        });
+                    }
+                }
+                
+                return parcelas;
             }
 
             gerarParcelasParaSalvar() {
@@ -3018,9 +3245,9 @@
                     }
                     
                 } else if (tipoPagamento === 'entrada') {
-                    const valorEntrada = parseFloat(document.getElementById('valor-entrada').value) || 0;
-                    const numParcelas = parseInt(document.getElementById('numero-parcelas-entrada').value) || 1;
-                    const dataPrimeira = document.getElementById('data-primeira-parcela-entrada').value;
+                    const valorEntrada = parseFloat(document.getElementById('valor-entrada-receber').value) || 0;
+                    const numParcelas = parseInt(document.getElementById('numero-parcelas-entrada-receber').value) || 1;
+                    const dataPrimeira = document.getElementById('data-primeira-parcela-entrada-receber').value;
                     const valorRestante = valorTotal - valorEntrada;
                     const valorParcela = numParcelas > 0 ? valorRestante / numParcelas : 0;
                     
@@ -3206,27 +3433,54 @@
                     const vencimento = document.getElementById('vencimento-pagar').value;
                     const tipo = document.getElementById('tipo-pagar').value;
                     const observacoes = document.getElementById('observacoes-pagar').value;
+                    const quantidadeParcelas = (tipo === 'parcelado' || tipo === 'entrada-parcelado') ? parseInt(document.getElementById('quantidade-parcelas').value) : 1;
                     
-                    const pagamento = {
-                        id: await this.db.gerarId(),
-                        fornecedor: fornecedor,
-                        descricao: descricao,
-                        valor: valor,
-                        vencimento: vencimento,
-                        status: 'aberto',
-                        tipo: tipo,
-                        observacoes: observacoes
-                    };
+                    // Gerar parcelas se for parcelado ou entrada-parcelado
+                    if (tipo === 'parcelado' || tipo === 'entrada-parcelado') {
+                        const parcelas = this.gerarParcelasPagarParaSalvar(
+                            fornecedor, 
+                            descricao, 
+                            valor, 
+                            vencimento, 
+                            tipo, 
+                            quantidadeParcelas, 
+                            observacoes
+                        );
+                        
+                        // Salvar cada parcela como um registro separado
+                        for (const parcela of parcelas) {
+                            await this.db.add('pagar', parcela);
+                        }
+                        
+                        showToast(`Pagamento salvo em ${quantidadeParcelas} parcela(s)!`, 'success');
+                    } else {
+                        // Salvar como registro único se for à vista
+                        const pagamento = {
+                            id: await this.db.gerarId(),
+                            fornecedor: fornecedor,
+                            descricao: descricao,
+                            valor: valor,
+                            vencimento: vencimento,
+                            status: 'aberto',
+                            tipo: tipo,
+                            quantidadeParcelas: 1,
+                            observacoes: observacoes
+                        };
+                        
+                        await this.db.add('pagar', pagamento);
+                        showToast('Pagamento salvo com sucesso!', 'success');
+                    }
                     
-                    await this.db.add('pagar', pagamento);
-                    
-                    showToast('Pagamento salvo com sucesso!', 'success');
                     hideModal('modal-lancamento-pagar');
                     this.carregarPagar();
                     this.carregarDadosDashboard();
                     
                     // Limpar formulário
                     document.getElementById('form-pagar').reset();
+                    // Ocultar campos de parcelas após salvar
+                    document.getElementById('campo-quantidade-parcelas').style.display = 'none';
+                    document.getElementById('campo-entrada-pagar').style.display = 'none';
+                    document.getElementById('detalhamento-parcelas-pagar').style.display = 'none';
                     
                 } catch (error) {
                     console.error('Erro ao salvar pagamento:', error);
@@ -3239,7 +3493,7 @@
                 document.getElementById('cliente-info').classList.add('hidden');
                 document.getElementById('orcamento-info').classList.add('hidden');
                 document.getElementById('tabela-parcelas').classList.add('hidden');
-                document.getElementById('tabela-entrada-parcelas').classList.add('hidden');
+                document.getElementById('tabela-entrada-parcelas-receber').classList.add('hidden');
                 document.getElementById('campos-parcelado').classList.add('hidden');
                 document.getElementById('campos-entrada').classList.add('hidden');
                 this.clienteSelecionado = null;
@@ -3425,7 +3679,7 @@
             }
             
             // Configurar data padrão para primeira parcela de entrada (30 dias)
-            const dataPrimeiraParcelaEntrada = document.getElementById('data-primeira-parcela-entrada');
+            const dataPrimeiraParcelaEntrada = document.getElementById('data-primeira-parcela-entrada-receber');
             if (dataPrimeiraParcelaEntrada) {
                 dataPrimeiraParcelaEntrada.value = data30dias.toISOString().split('T')[0];
             }
@@ -3627,7 +3881,7 @@
                     dataPrimeiraParcela.value = data30dias.toISOString().split('T')[0];
                 }
                 
-                const dataPrimeiraParcelaEntrada = document.getElementById('data-primeira-parcela-entrada');
+                const dataPrimeiraParcelaEntrada = document.getElementById('data-primeira-parcela-entrada-receber');
                 if (dataPrimeiraParcelaEntrada) {
                     dataPrimeiraParcelaEntrada.value = data30dias.toISOString().split('T')[0];
                 }
@@ -3639,6 +3893,41 @@
                     console.log('Recarregando orçamentos para cliente já selecionado:', ui.clienteSelecionado.id);
                     ui.carregarOrcamentosCliente(ui.clienteSelecionado.id);
                 }
+            }
+            
+            // Configurar modal de pagamento a pagar
+            if (modalId === 'modal-lancamento-pagar') {
+                // Resetar formulário primeiro (limpa campos antigos)
+                const formPagar = document.getElementById('form-pagar');
+                if (formPagar) formPagar.reset();
+
+                // Ocultar campos de entrada e parcelas por padrão
+                const campoEntradaEl = document.getElementById('campo-entrada-pagar');
+                const campoParcelasEl = document.getElementById('campo-quantidade-parcelas');
+                const detalhamentoEl = document.getElementById('detalhamento-parcelas-pagar');
+                const listaParcelasEl = document.getElementById('lista-parcelas-pagar');
+                const tipoPagarEl = document.getElementById('tipo-pagar');
+                const vencimentoPagarEl = document.getElementById('vencimento-pagar');
+
+                if (campoEntradaEl) campoEntradaEl.style.display = 'none';
+                if (campoParcelasEl) campoParcelasEl.style.display = 'none';
+                if (detalhamentoEl) detalhamentoEl.style.display = 'none';
+                if (listaParcelasEl) listaParcelasEl.innerHTML = '';
+                if (tipoPagarEl) tipoPagarEl.value = 'normal';
+
+                // Definir data padrão de vencimento como hoje (YYYY-MM-DD)
+                if (vencimentoPagarEl) {
+                    const hoje = new Date();
+                    vencimentoPagarEl.value = hoje.toISOString().split('T')[0];
+                }
+
+                // Garantir que a UI atualize caso já exista valor/quantidade
+                try {
+                    toggleQuantidadeParcelas();
+                } catch (e) {}
+                try {
+                    atualizarDetalhamentoParcelas();
+                } catch (e) {}
             }
         }
 
@@ -3691,14 +3980,14 @@
             document.getElementById('campos-parcelado').classList.add('hidden');
             document.getElementById('campos-entrada').classList.add('hidden');
             document.getElementById('tabela-parcelas').classList.add('hidden');
-            document.getElementById('tabela-entrada-parcelas').classList.add('hidden');
+            document.getElementById('tabela-entrada-parcelas-receber').classList.add('hidden');
             
             if (tipo === 'parcelado') {
                 document.getElementById('campos-parcelado').classList.remove('hidden');
                 ui.calcularParcelas();
             } else if (tipo === 'entrada') {
                 document.getElementById('campos-entrada').classList.remove('hidden');
-                ui.calcularParcelas();
+                ui.calcularParcelasEntrada();
             }
         }
 
@@ -3730,6 +4019,154 @@
         function salvarPagamento(event) {
             event.preventDefault();
             ui.salvarPagamento();
+        }
+        
+        function toggleQuantidadeParcelas() {
+            const tipo = document.getElementById('tipo-pagar').value;
+            const campoEntrada = document.getElementById('campo-entrada-pagar');
+            const campoParcelas = document.getElementById('campo-quantidade-parcelas');
+            const inputEntrada = document.getElementById('valor-entrada');
+            const inputParcelas = document.getElementById('quantidade-parcelas');
+            const detalhamento = document.getElementById('detalhamento-parcelas-pagar');
+            
+            // Ocultar tudo inicialmente
+            if (campoEntrada) campoEntrada.style.display = 'none';
+            if (campoParcelas) campoParcelas.style.display = 'none';
+            inputParcelas.required = false;
+            inputParcelas.value = '';
+
+            if (tipo === 'parcelado') {
+                campoParcelas.style.display = 'block';
+                inputParcelas.required = true;
+                inputParcelas.value = '2';
+                setTimeout(function() { atualizarDetalhamentoParcelas(); }, 50);
+            } else if (tipo === 'entrada-parcelado') {
+                campoEntrada.style.display = 'block';
+                campoParcelas.style.display = 'block';
+                inputEntrada.required = true;
+                inputParcelas.required = true;
+                inputParcelas.value = '1';
+                // NÃO limpar o valor da entrada - deixar o usuário preencher
+                setTimeout(function() { atualizarDetalhamentoParcelas(); }, 50);
+            } else {
+                inputEntrada.required = false;
+                inputEntrada.value = '';
+                inputParcelas.required = false;
+                if (detalhamento) detalhamento.style.display = 'none';
+                const lista = document.getElementById('lista-parcelas-pagar');
+                if (lista) lista.innerHTML = '';
+            }
+        }
+        
+        function atualizarDetalhamentoParcelas() {
+            try {
+                console.log('=== INICIANDO atualizarDetalhamentoParcelas ===');
+                
+                const tipo = document.getElementById('tipo-pagar').value;
+                console.log('Tipo:', tipo);
+                
+                const detalhamento = document.getElementById('detalhamento-parcelas-pagar');
+                const listaParcelas = document.getElementById('lista-parcelas-pagar');
+
+                if (!detalhamento) {
+                    console.log('ERRO: detalhamento não encontrado');
+                    return;
+                }
+                if (!listaParcelas) {
+                    console.log('ERRO: lista-parcelas-pagar não encontrado');
+                    return;
+                }
+
+                // Se não for parcelado ou entrada-parcelado, ocultar
+                if (tipo !== 'parcelado' && tipo !== 'entrada-parcelado') {
+                    detalhamento.style.display = 'none';
+                    console.log('Tipo não é parcelado, ocultando detalhamento');
+                    return;
+                }
+
+                const valor = parseFloat(document.getElementById('valor-pagar').value) || 0;
+                const quantidade = parseInt(document.getElementById('quantidade-parcelas').value) || 0;
+                const dataVencimento = document.getElementById('vencimento-pagar').value;
+
+                console.log('Valor:', valor, 'Quantidade:', quantidade, 'Data Vencimento:', dataVencimento);
+
+                // Se faltar algum dado, não mostrar
+                if (valor <= 0 || quantidade <= 0 || !dataVencimento) {
+                    console.log('Dados incompletos - valor:', valor, 'qtd:', quantidade, 'data:', dataVencimento);
+                    detalhamento.style.display = 'none';
+                    return;
+                }
+
+                let html = '';
+                let valorRestante = valor;
+                let primeiraParcela = 0;
+
+                const dataParts = dataVencimento.split('-');
+                const ano = parseInt(dataParts[0]);
+                const mes = parseInt(dataParts[1]) - 1;
+                const dia = parseInt(dataParts[2]);
+                const pad = (n) => String(n).padStart(2, '0');
+
+                // Se for entrada + parcelamento
+                if (tipo === 'entrada-parcelado') {
+                    const inputEntrada = document.getElementById('valor-entrada');
+                    const valorEntradaRaw = inputEntrada ? inputEntrada.value : '';
+                    console.log('input-entrada element:', inputEntrada);
+                    console.log('input-entrada.value RAW:', valorEntradaRaw);
+                    
+                    primeiraParcela = parseFloat(valorEntradaRaw) || 0;
+                    console.log('Entrada + Parcelas - Valor Entrada PARSED:', primeiraParcela);
+
+                    if (primeiraParcela <= 0) {
+                        console.log('Entrada <= 0, não mostrando');
+                        detalhamento.style.display = 'none';
+                        return;
+                    }
+
+                    // Validar se entrada não é maior que o valor total
+                    if (primeiraParcela >= valor) {
+                        alert('Entrada não pode ser maior ou igual ao valor total');
+                        detalhamento.style.display = 'none';
+                        return;
+                    }
+
+                    // Entrada no mesmo dia de vencimento
+                    const dataEntrada = pad(parseInt(dataParts[2])) + '/' + pad(parseInt(dataParts[1])) + '/' + dataParts[0];
+                    const valorEntradaFormatado = 'R$ ' + primeiraParcela.toFixed(2).replace('.', ',');
+
+                    html += '<div style="padding:8px 10px;background-color:#e8f5e9;margin-bottom:6px;border-radius:4px;border-left:3px solid #4caf50;display:flex;justify-content:space-between;">' +
+                            '<span style="flex:1;font-weight:bold;color:#2e7d32;">Entrada</span>' +
+                            '<span style="flex:1;text-align:center;color:#2e7d32;font-weight:bold;">' + valorEntradaFormatado + '</span>' +
+                            '<span style="flex:1;text-align:right;color:#558b2f;">' + dataEntrada + '</span></div>';
+
+                    valorRestante = valor - primeiraParcela;
+                }
+
+                // Calcular parcelas
+                const valorParcela = valorRestante / quantidade;
+
+                console.log('Valor Parcela:', valorParcela, 'Valor Restante:', valorRestante);
+
+                for (let i = 1; i <= quantidade; i++) {
+                    const dataAtual = new Date(ano, mes + i, dia);
+                    const dataFormatada = pad(dataAtual.getDate()) + '/' + pad(dataAtual.getMonth() + 1) + '/' + dataAtual.getFullYear();
+                    const valorFormatado = 'R$ ' + valorParcela.toFixed(2).replace('.', ',');
+
+                    html += '<div style="padding:8px 10px;background-color:white;margin-bottom:6px;border-radius:4px;border-left:3px solid #3498db;display:flex;justify-content:space-between;">' +
+                            '<span style="flex:1;font-weight:500;">Parcela ' + i + '/' + quantidade + '</span>' +
+                            '<span style="flex:1;text-align:center;color:#27ae60;font-weight:bold;">' + valorFormatado + '</span>' +
+                            '<span style="flex:1;text-align:right;color:#7f8c8d;">' + dataFormatada + '</span></div>';
+                }
+
+                listaParcelas.innerHTML = html;
+                detalhamento.style.display = 'block';
+                
+                console.log('Detalhamento exibido com sucesso');
+                console.log('=== FIM atualizarDetalhamentoParcelas ===');
+
+            } catch (error) {
+                console.error('ERRO em atualizarDetalhamentoParcelas:', error);
+            }
         }
 
         function marcarComoPago() {
