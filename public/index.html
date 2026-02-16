@@ -830,7 +830,7 @@
                     <!-- Conteúdo do agendamento será carregado aqui -->
                 </div>
                 <div style="display: flex; gap: 10px; margin-top: 20px; justify-content: center;">
-                    <button class="btn btn-warning" onclick="sistema.marcarEmServico()" id="btn-em-servico">Marcar em Serviço</button>
+                    <button class="btn btn-warning" onclick="sistema.irParaOrcamento(state.currentAgendamentoId)" id="btn-em-servico">Orçamento</button>
                     <button class="btn btn-success" onclick="sistema.finalizarAgendamento()" id="btn-finalizar">Finalizar</button>
                     <button class="btn btn-primary" onclick="sistema.enviarWhatsAppAgendamento()">📱 Enviar WhatsApp</button>
                     <button class="btn btn-secondary" onclick="fecharModalVisualizarAgendamento()">Fechar</button>
@@ -1038,6 +1038,31 @@
             </div>
             <div class="form-group">
                 <label>Mensagem:</label>
+                <div style="margin-bottom:8px; display:flex; gap:8px; align-items:center;">
+                    <label style="margin:0;">Selecionar veículo:</label>
+                    <select id="whatsapp-os-veiculo-select" style="min-width:220px; display:none;"></select>
+                    <button class="btn btn-sm btn-primary" id="whatsapp-os-apply-veiculo" style="display:none;" onclick="(function(){
+                        const sel = document.getElementById('whatsapp-os-veiculo-select');
+                        const msgEl = document.getElementById('mensagem-whatsapp-os');
+                        const val = sel.value;
+                        if (!val) return alert('Selecione um veículo');
+                        const parsed = JSON.parse(decodeURIComponent(val));
+                        // substituir linha de veículo na mensagem
+                        const lines = msgEl.value.split('\n');
+                        for (let i=0;i<lines.length;i++) {
+                            if (lines[i].includes('*Veículo:*')) {
+                                lines[i] = `🚗 *Veículo:* ${parsed.placa}${parsed.marca ? ' - ' + parsed.marca + ' ' + (parsed.modelo || '') : ''}`;
+                                // remover observação se havia
+                                lines = lines.filter(l => !l.includes('Observação: veículo não consta'));
+                                break;
+                            }
+                        }
+                        msgEl.value = lines.join('\n');
+                        // esconder select após aplicar
+                        document.getElementById('whatsapp-os-veiculo-select').style.display = 'none';
+                        document.getElementById('whatsapp-os-apply-veiculo').style.display = 'none';
+                    })()">Aplicar veículo</button>
+                </div>
                 <textarea id="mensagem-whatsapp-os" style="width: 100%; height: 300px; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-family: Arial, sans-serif; font-size: 14px;"></textarea>
             </div>
             <div style="display: flex; gap: 10px; margin-top: 20px; justify-content: center;">
@@ -1926,6 +1951,10 @@
                     clienteId: parseIntSafe(orcamento.cliente_id ?? orcamento.clienteId),
                     veiculoId: veiculoId, // Pode ser número ou string
                     agendamentoId: parseIntSafe(orcamento.agendamento_id ?? orcamento.agendamentoId),
+                    // aceitar snapshot de veículo quando presente no objeto do orçamento
+                    veiculoPlaca: orcamento.veiculo_placa || orcamento.veiculoPlaca || null,
+                    veiculoMarca: orcamento.veiculo_marca || orcamento.veiculoMarca || null,
+                    veiculoModelo: orcamento.veiculo_modelo || orcamento.veiculoModelo || null,
                     servicos: Array.isArray(orcamento.servicos) ? orcamento.servicos : (orcamento.servicos ? JSON.parse(orcamento.servicos) : []),
                     pecas: Array.isArray(orcamento.pecas) ? orcamento.pecas : (orcamento.pecas ? JSON.parse(orcamento.pecas) : []),
                     observacoes: orcamento.observacoes || '',
@@ -2034,6 +2063,10 @@
                     clienteId: parseIntSafe(os.cliente_id ?? os.clienteId),
                     veiculoId: parseIntSafe(os.veiculo_id ?? os.veiculoId),
                     agendamentoId: parseIntSafe(os.agendamento_id ?? os.agendamentoId),
+                    // aceitar snapshot de veículo quando presente no objeto O.S.
+                    veiculoPlaca: os.veiculo_placa || os.veiculoPlaca || os.placa || null,
+                    veiculoMarca: os.veiculo_marca || os.veiculoMarca || os.marca || null,
+                    veiculoModelo: os.veiculo_modelo || os.veiculoModelo || os.modelo || null,
                     servicos: Array.isArray(os.servicos) ? os.servicos : (os.servicos ? JSON.parse(os.servicos) : []),
                     pecas: Array.isArray(os.pecas) ? os.pecas : (os.pecas ? JSON.parse(os.pecas) : []),
                     observacoes: os.observacoes || '',
@@ -4221,6 +4254,23 @@
                 });
 
                 const criada = await this.apiRequest('/ordens-servico', { method: 'POST', data: payload });
+                // Anexar snapshot do veículo à resposta (se disponível localmente)
+                try {
+                    const veic = this.buscarVeiculoPorId(orcamento.veiculoId);
+                    if (veic) {
+                        criada.veiculo_placa = veic.placa || criada.veiculo_placa || null;
+                        criada.veiculo_marca = veic.marca || criada.veiculo_marca || null;
+                        criada.veiculo_modelo = veic.modelo || criada.veiculo_modelo || null;
+                    } else if (orcamento.veiculoPlaca || orcamento.veiculoPlaca === '') {
+                        // usar snapshot do orçamento, se presente
+                        criada.veiculo_placa = criada.veiculo_placa || orcamento.veiculoPlaca;
+                        criada.veiculo_marca = criada.veiculo_marca || orcamento.veiculoMarca;
+                        criada.veiculo_modelo = criada.veiculo_modelo || orcamento.veiculoModelo;
+                    }
+                } catch (e) {
+                    console.warn('Não foi possível anexar snapshot de veículo à O.S.:', e);
+                }
+
                 const novaOS = this.normalizarOrdemServico(criada);
                 this.dados.ordensServico.push(novaOS);
                 this.salvarDados('ordensServico');
@@ -5301,17 +5351,32 @@ Obrigado pela confiança! 🙏`;
                 this.reconstruirListaVeiculos();
 
                 const cliente = this.dados.clientes.find(c => c.id === os.clienteId);
-                const veiculo = this.buscarVeiculoPorId(os.veiculoId);
-                
-                if (!cliente || !veiculo) {
-                    console.error('Dados incompletos para enviar WhatsApp OS:', {
-                        clienteId: os.clienteId,
-                        veiculoId: os.veiculoId,
-                        clienteEncontrado: !!cliente,
-                        veiculoEncontrado: !!veiculo
-                    });
-                    this.log('Dados incompletos para enviar WhatsApp ao cliente. Verifique se o cliente e veículo estão cadastrados.', 'warning');
+                let veiculo = this.buscarVeiculoPorId(os.veiculoId);
+
+                // Se veículo não encontrado, tentar usar dados do orçamento vinculado
+                if (!veiculo && os.orcamentoId) {
+                    const orc = this.dados.orcamentos.find(o => o.id === os.orcamentoId);
+                    if (orc) {
+                        // tentar buscar por veiculoId do orçamento
+                        if (orc.veiculoId) veiculo = this.buscarVeiculoPorId(orc.veiculoId);
+                        // se não encontrar, aproveitar snapshot presente no orçamento
+                        if (!veiculo && (orc.veiculoPlaca || orc.veiculoMarca || orc.veiculoModelo)) {
+                            veiculo = { placa: orc.veiculoPlaca || 'Não informado', marca: orc.veiculoMarca || '', modelo: orc.veiculoModelo || '' };
+                        }
+                    }
+                }
+
+                if (!cliente) {
+                    console.error('Cliente não encontrado para O.S.:', { clienteId: os.clienteId });
+                    this.log('Cliente não encontrado para enviar WhatsApp.', 'warning');
                     return;
+                }
+
+                const veiculoAusente = !veiculo;
+                if (veiculoAusente) {
+                    console.warn('Veículo não encontrado para O.S.; mensagem será enviada sem dados do veículo', { veiculoId: os.veiculoId, orcamentoId: os.orcamentoId });
+                    this.log('Veículo não encontrado — enviando mensagem sem dados do veículo.', 'warning');
+                    veiculo = { placa: 'Não informado', marca: '', modelo: '' };
                 }
 
                 if (!cliente.whatsapp) {
@@ -5322,7 +5387,17 @@ Obrigado pela confiança! 🙏`;
                 // Guardar referência da OS no estado para uso posterior
                 window._osWhatsAppId = id;
 
-                const veiculoInfo = `${veiculo.placa} - ${veiculo.marca} ${veiculo.modelo}`;
+                // Preferir snapshot de veículo presente na O.S. (placa/marca/modelo)
+                const osVeiculoPlaca = os.veiculoPlaca || os.veiculoPlaca === '' ? os.veiculoPlaca : null;
+                const osVeiculoMarca = os.veiculoMarca || os.veiculoMarca === '' ? os.veiculoMarca : null;
+                const osVeiculoModelo = os.veiculoModelo || os.veiculoModelo === '' ? os.veiculoModelo : null;
+
+                let veiculoInfo = '';
+                if (osVeiculoPlaca || osVeiculoMarca || osVeiculoModelo) {
+                    veiculoInfo = `${osVeiculoPlaca || 'Não informado'}${osVeiculoMarca ? ' - ' + osVeiculoMarca + (osVeiculoModelo ? ' ' + osVeiculoModelo : '') : (osVeiculoModelo ? ' - ' + osVeiculoModelo : '')}`;
+                } else {
+                    veiculoInfo = `${veiculo.placa}${veiculo.marca ? ' - ' + veiculo.marca + ' ' + veiculo.modelo : ''}`;
+                }
                 const dataFinalizacao = os.dataFinalizacao 
                     ? new Date(os.dataFinalizacao).toLocaleString('pt-BR')
                     : new Date().toLocaleString('pt-BR');
@@ -5336,7 +5411,7 @@ Obrigado pela confiança! 🙏`;
 📋 *O.S. Nº:* #${os.numero}
 📅 *Finalizado em:* ${dataFinalizacao}
 
-Seu carro está pronto e você já pode vir buscá-lo! 🎉
+${veiculoAusente ? '_Observação: veículo não consta no cadastro do sistema._\n\n' : ''}Seu carro está pronto e você já pode vir buscá-lo! 🎉
 
 Caso tenha alguma dúvida ou precise de mais informações, entre em contato conosco.
 
@@ -5349,6 +5424,21 @@ Obrigado pela confiança! 🙏`;
                 document.getElementById('whatsapp-os-cliente').textContent = cliente.nome;
                 document.getElementById('whatsapp-os-telefone').value = cliente.whatsapp;
                 document.getElementById('mensagem-whatsapp-os').value = mensagem;
+
+                // Preparar select de veículos se necessário
+                const veiculoSelect = document.getElementById('whatsapp-os-veiculo-select');
+                const veiculoApplyBtn = document.getElementById('whatsapp-os-apply-veiculo');
+                if (veiculoAusente && cliente && Array.isArray(cliente.veiculos) && cliente.veiculos.length > 0) {
+                    veiculoSelect.innerHTML = '<option value="">-- Selecionar veículo --</option>' + cliente.veiculos.map(v => {
+                        const opt = { placa: v.placa || '', marca: v.marca || '', modelo: v.modelo || '', id: v.id || '' };
+                        return `<option value='${encodeURIComponent(JSON.stringify(opt))}'>${v.placa} - ${v.marca} ${v.modelo || ''}</option>`;
+                    }).join('');
+                    veiculoSelect.style.display = 'inline-block';
+                    veiculoApplyBtn.style.display = 'inline-block';
+                } else {
+                    veiculoSelect.style.display = 'none';
+                    veiculoApplyBtn.style.display = 'none';
+                }
 
                 // Abrir o modal
                 document.getElementById('modal-whatsapp-os').style.display = 'block';
