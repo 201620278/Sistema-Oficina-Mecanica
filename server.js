@@ -789,7 +789,13 @@ app.get('/api/admin/status', (req, res) => {
 app.post('/api/clientes', (req, res) => {
     const cliente = req.body;
     const endereco = JSON.stringify(cliente.endereco || {});
-    const veiculos = JSON.stringify(cliente.veiculos || []);
+    // Normalizar veículos garantindo propriedade `ativo` por padrão
+    const normalizedVeiculosArray = (cliente.veiculos || []).map(v => {
+        const veh = Object.assign({}, v);
+        if (veh.ativo === undefined) veh.ativo = true;
+        return veh;
+    });
+    const veiculos = JSON.stringify(normalizedVeiculosArray);
     let possuiIdCustomizado = cliente.id !== undefined && cliente.id !== null && cliente.id !== '';
     let idCustomizado = null;
     if (possuiIdCustomizado) {
@@ -821,7 +827,7 @@ app.post('/api/clientes', (req, res) => {
                             id: idCustomizado, 
                             ...cliente,
                             endereco: cliente.endereco || {},
-                            veiculos: cliente.veiculos || []
+                            veiculos: normalizedVeiculosArray
                         });
                     }
                 );
@@ -860,7 +866,7 @@ app.post('/api/clientes', (req, res) => {
                     id: novoId, 
                     ...cliente,
                     endereco: cliente.endereco || {},
-                    veiculos: cliente.veiculos || []
+                    veiculos: normalizedVeiculosArray
                 });
             }
         );
@@ -1647,7 +1653,13 @@ app.put('/api/clientes/:id', (req, res) => {
     const id = parseInt(req.params.id);
     const cliente = req.body;
     const endereco = JSON.stringify(cliente.endereco || {});
-    const veiculos = JSON.stringify(cliente.veiculos || []);
+    // Normalizar veículos garantindo propriedade `ativo` por padrão
+    const normalizedVeiculosArray = (cliente.veiculos || []).map(v => {
+        const veh = Object.assign({}, v);
+        if (veh.ativo === undefined) veh.ativo = true;
+        return veh;
+    });
+    const veiculos = JSON.stringify(normalizedVeiculosArray);
     
     db.run(
         'UPDATE clientes SET nome = ?, telefone = ?, endereco = ?, veiculos = ?, ativo = ? WHERE id = ?',
@@ -1661,9 +1673,63 @@ app.put('/api/clientes/:id', (req, res) => {
                 res.status(404).json({ error: 'Cliente não encontrado' });
                 return;
             }
-            res.json({ id, ...cliente });
+            res.json({ id, ...cliente, veiculos: normalizedVeiculosArray });
         }
     );
+});
+
+// PATCH endpoint para desativar um veículo dentro do cadastro do cliente
+app.patch('/api/clientes/:clienteId/veiculos/:veiculoId/desativar', (req, res) => {
+    const clienteId = parseInt(req.params.clienteId);
+    const veiculoId = req.params.veiculoId;
+
+    if (Number.isNaN(clienteId)) {
+        res.status(400).json({ error: 'clienteId inválido' });
+        return;
+    }
+
+    db.get('SELECT veiculos FROM clientes WHERE id = ?', [clienteId], (err, row) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        if (!row) {
+            res.status(404).json({ error: 'Cliente não encontrado' });
+            return;
+        }
+
+        let vehicles = [];
+        try {
+            vehicles = row.veiculos ? JSON.parse(row.veiculos) : [];
+        } catch (e) {
+            vehicles = [];
+        }
+
+        const idx = vehicles.findIndex(v => String(v.id) === String(veiculoId));
+        if (idx === -1) {
+            res.status(404).json({ error: 'Veículo não encontrado para este cliente' });
+            return;
+        }
+
+        const vehicle = vehicles[idx];
+        if (vehicle.ativo === false || vehicle.ativo === 0) {
+            res.json({ message: 'Veículo já está desativado', veiculo: vehicle });
+            return;
+        }
+
+        vehicle.ativo = false;
+        vehicle.data_desativacao = new Date().toISOString();
+
+        // Persistir alteração
+        const veiculosJson = JSON.stringify(vehicles);
+        db.run('UPDATE clientes SET veiculos = ? WHERE id = ?', [veiculosJson, clienteId], function(updateErr) {
+            if (updateErr) {
+                res.status(500).json({ error: updateErr.message });
+                return;
+            }
+            res.json({ message: 'Veículo desativado com sucesso', veiculo: vehicle });
+        });
+    });
 });
 
 app.put('/api/agendamentos/:id', (req, res) => {

@@ -1559,6 +1559,61 @@
                     return found || null;
             }
 
+            // Desativa um veículo (usa endpoint PATCH criado no servidor)
+            async desativarVeiculo(clienteId, veiculoId) {
+                try {
+                    if (!clienteId || !veiculoId) throw new Error('clienteId e veiculoId são obrigatórios');
+                    // garantir encoding do veiculoId na URL (IDs podem ter caracteres especiais)
+                    const encodedVid = encodeURIComponent(String(veiculoId));
+                    await this.apiRequest(`/clientes/${clienteId}/veiculos/${encodedVid}/desativar`, { method: 'PATCH' });
+
+                    // Atualizar estado localmente
+                    const cliente = this.dados.clientes.find(c => c.id === Number(clienteId));
+                    if (cliente && Array.isArray(cliente.veiculos)) {
+                        const v = cliente.veiculos.find(x => String(x.id) === String(veiculoId));
+                        if (v) {
+                            v.ativo = false;
+                            v.data_desativacao = new Date().toISOString();
+                        }
+                    }
+                    this.reconstruirListaVeiculos();
+                    this.atualizarVeiculos();
+                    this.salvarDados('clientes');
+                    this.log('Veículo desativado com sucesso', 'warning');
+                } catch (err) {
+                    console.error('Erro ao desativar veículo:', err);
+                    alert('Erro ao desativar veículo: ' + (err.message || err));
+                }
+            }
+
+            // Reativa um veículo atualizando o cliente (usa PUT /api/clientes/:id)
+            async ativarVeiculo(clienteId, veiculoId) {
+                try {
+                    if (!clienteId || !veiculoId) throw new Error('clienteId e veiculoId são obrigatórios');
+
+                    const cliente = this.dados.clientes.find(c => c.id === Number(clienteId));
+                    if (!cliente) throw new Error('Cliente não encontrado');
+
+                    // Atualizar localmente antes de enviar
+                    const veiculo = (cliente.veiculos || []).find(v => String(v.id) === String(veiculoId));
+                    if (!veiculo) throw new Error('Veículo não encontrado no cliente');
+                    veiculo.ativo = true;
+                    delete veiculo.data_desativacao;
+
+                    // Enviar atualização completa do cliente (PUT)
+                    // usar PUT para atualizar cliente (veículos atualizados no corpo)
+                    await this.apiRequest(`/clientes/${clienteId}`, { method: 'PUT', body: { ...cliente, veiculos: cliente.veiculos } });
+
+                    this.reconstruirListaVeiculos();
+                    this.atualizarVeiculos();
+                    this.salvarDados('clientes');
+                    this.log('Veículo reativado com sucesso', 'success');
+                } catch (err) {
+                    console.error('Erro ao ativar veículo:', err);
+                    alert('Erro ao ativar veículo: ' + (err.message || err));
+                }
+            }
+
             criarPayloadCliente({ id, nome, whatsapp, telefone, endereco, veiculos, ativo = true }) {
                 const telefoneLimpo = (telefone || whatsapp || '').replace(/\D/g, '');
                 const enderecoLimpo = endereco && Object.values(endereco).some(v => v && v.toString().trim() !== '')
@@ -3986,6 +4041,12 @@
                     
                     // Linhas dos veículos deste cliente
                     veiculos.forEach(veiculo => {
+                        const isActive = veiculo.ativo !== false;
+                        const statusBadge = isActive ? `<span class="badge badge-success">Ativo</span>` : `<span class="badge badge-secondary">Inativo</span>`;
+                        const actionButton = isActive
+                            ? `<button class="btn btn-sm btn-warning" onclick="sistema.desativarVeiculo(${cliente?.id}, '${veiculo.id}')">Desativar</button>`
+                            : `<button class="btn btn-sm btn-success" onclick="sistema.ativarVeiculo(${cliente?.id}, '${veiculo.id}')">Ativar</button>`;
+
                         html += `
                             <tr>
                                 <td>${veiculo.placa}</td>
@@ -3993,7 +4054,10 @@
                                 <td>${cliente?.nome || 'N/A'}</td>
                                 <td>${veiculo.ano || '-'}</td>
                                 <td>-</td>
-                                <td><span class="badge badge-success">Ativo</span></td>
+                                <td style="display: flex; gap: 8px; align-items: center;">
+                                    ${statusBadge}
+                                    ${actionButton}
+                                </td>
                             </tr>
                         `;
                     });
