@@ -1,0 +1,28 @@
+{
+  "module": "clientes",
+  "ids": [
+    "7",
+    "6"
+  ],
+  "rows": [
+    {
+      "id": 6,
+      "nome": "Cicero Diego de Souza machado",
+      "telefone": "88996255866",
+      "endereco": "{\"cep\":\"63031165\",\"logradouro\":\"Rua Santo Amâncio\",\"numero\":\"190\",\"complemento\":\"\",\"bairro\":\"Tiradentes\",\"cidade\":\"Juazeiro do Norte\",\"estado\":\"CE\"}",
+      "veiculos": "[{\"id\":\"veh-novo-1771207127245-0-68\",\"placa\":\"QXB6E68\",\"marca\":\"FIAT\",\"modelo\":\"ARGO\",\"ano\":\"2019\",\"ativo\":true}]",
+      "ativo": 1,
+      "created_at": "2026-02-16 01:58:47"
+    },
+    {
+      "id": 7,
+      "nome": "Cicero Diego de Souza machado",
+      "telefone": "88996255866",
+      "endereco": "{\"cep\":\"63031165\",\"logradouro\":\"Rua Santo Amâncio\",\"numero\":\"190\",\"complemento\":\"\",\"bairro\":\"Tiradentes\",\"cidade\":\"Juazeiro do Norte\",\"estado\":\"CE\"}",
+      "veiculos": "[{\"id\":\"veh-novo-1771207127246-0-617\",\"placa\":\"QXB6E68\",\"marca\":\"FIAT\",\"modelo\":\"ARGO\",\"ano\":\"2019\",\"ativo\":true}]",
+      "ativo": 1,
+      "created_at": "2026-02-16 01:58:48"
+    }
+  ],
+  "created_at": "2026-02-16T02:03:32.458Z"
+}

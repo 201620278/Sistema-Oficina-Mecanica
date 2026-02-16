@@ -216,7 +216,7 @@
                 <li class="nav-item" onclick="openFinanceiro()" style="cursor: pointer;">
                     <i>💰</i> Financeiro (Nova Aba)
                 </li>
-                <li class="nav-item" data-section="configuracoes">
+                <li class="nav-item nav-admin-only" data-section="configuracoes" style="display: none;">
                     <i>⚙️</i> Configurações
                 </li>
                 <li class="nav-item" id="btn-logout-admin" style="display: none; border-top: 1px solid rgba(255,255,255,0.1); margin-top: 20px; padding-top: 15px;" onclick="fazerLogoutAdmin()">
@@ -2353,10 +2353,19 @@
                         await this.apiRequest(`/clientes/${editId}`, { method: 'PUT', data: payload });
                         mensagem = 'Cliente atualizado com sucesso!';
                     } else {
-                        await this.apiRequest('/clientes', { method: 'POST', data: payload });
+                        const novoCliente = await this.apiRequest('/clientes', { method: 'POST', data: payload });
+                        // Adicionar o novo cliente retornado pelo servidor à lista local
+                        if (novoCliente && novoCliente.id) {
+                            const clienteNormalizado = this.normalizarCliente(novoCliente);
+                            this.dados.clientes.push(clienteNormalizado);
+                            this.salvarDados('clientes');
+                        }
                     }
 
-                    await this.sincronizarClientesComServidor();
+                    // Sincronizar apenas se editando, para novo cliente já foi sincronizado via POST
+                    if (editId) {
+                        await this.sincronizarClientesComServidor();
+                    }
 
                     fecharModalCliente();
                     // remover flag de edição
@@ -3539,6 +3548,7 @@
 
             atualizarTodosDados() {
                 this.atualizarDashboard();
+                this.reconstruirListaVeiculos(); // Reconstruir lista de veículos ANTES de atualizar clientes
                 this.atualizarClientes();
                 this.atualizarVeiculos();
                 this.aplicarFiltroOrcamento('pendentes');
@@ -6512,6 +6522,15 @@ Obrigado pela confiança! 🙏`;
                     // Mostrar/ocultar botões marcados com classe .btn-admin
                     const adminBtns = document.querySelectorAll('.btn-admin');
                     adminBtns.forEach(b => { b.style.display = data.isAdmin ? 'none' : ''; });
+                    // Mostrar/ocultar elementos admin-only (.nav-admin-only, #configuracoes)
+                    const adminOnlyItems = document.querySelectorAll('.nav-admin-only');
+                    adminOnlyItems.forEach(item => {
+                        item.style.display = data.isAdmin ? '' : 'none';
+                    });
+                    const configSection = document.getElementById('configuracoes');
+                    if (configSection) {
+                        configSection.style.display = data.isAdmin ? '' : 'none';
+                    }
                     return data;
                 } catch (e) {
                     return { isAdmin: false };
@@ -9095,6 +9114,11 @@ Obrigado pela confiança! 🙏`;
                 // Mostrar modo admin na UI
                 mostrarModoAdmin();
                 
+                // Atualizar visibilidade de elementos admin-only
+                if (sistema) {
+                    await sistema.checkAdminStatusIndex();
+                }
+                
                 // Entrar direto no app chamando entrarNoSistema para configurar tudo corretamente
                 sistema.entrarNoSistema();
             } catch (err) {
@@ -9141,6 +9165,12 @@ Obrigado pela confiança! 🙏`;
 
                 if (resp.ok) {
                     ocultarModoAdmin();
+                    
+                    // Atualizar visibilidade de elementos admin-only
+                    if (sistema) {
+                        await sistema.checkAdminStatusIndex();
+                    }
+                    
                     alert('Saído do modo administrador');
                     // Voltar para tela de login
                     document.getElementById('app-container').classList.add('hidden');
@@ -9163,6 +9193,8 @@ Obrigado pela confiança! 🙏`;
                     if (data.isAdmin) {
                         mostrarModoAdmin();
                     }
+                    // Atualizar visibilidade de elementos admin-only
+                    await sistema?.checkAdminStatusIndex?.();
                 }
             } catch (err) {
                 console.error('Erro ao verificar status admin:', err);
