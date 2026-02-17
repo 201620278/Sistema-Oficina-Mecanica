@@ -3788,7 +3788,7 @@
                             descricao: descricao,
                             valor: valor,
                             vencimento: vencimento,
-                            status: 'aberto',
+                            status: 'pago', // à vista já vem como pago
                             tipo: tipo,
                             quantidadeParcelas: 1,
                             observacoes: observacoes
@@ -5220,7 +5220,11 @@
                         return s === 'pago' || s === 'paid' || it.pago === true || it.confirmado === 1 || it.confirmado === '1' || it.dataPagamento || it.data_pagamento || it.confirmadoEm || it.confirmado_em;
                     };
                     const totalPagarFiltrado = filtrados
-                        .filter(p => !isPaid(p))
+                        .filter(p => {
+                            // Considera apenas status aberto, pendente ou atrasado
+                            const st = (p.status || '').toLowerCase();
+                            return st === 'aberto' || st === 'pendente' || st === 'atrasado';
+                        })
                         .reduce((sum, p) => sum + (Number(p.valor) || 0), 0);
 
                     const hojeZero = new Date(); hojeZero.setHours(0,0,0,0);
@@ -5233,8 +5237,10 @@
                         return null;
                     };
                     const totalPagarVencidoFiltrado = filtrados
-                        .filter(p => !isPaid(p))
                         .filter(p => {
+                            // Considera apenas status aberto, pendente ou atrasado
+                            const st = (p.status || '').toLowerCase();
+                            if (!(st === 'aberto' || st === 'pendente' || st === 'atrasado')) return false;
                             const v = parseDateLocal(p.vencimento || p.data || p.created_at || p.createdAt || p.criado_em);
                             return v && v < hojeZero;
                         })

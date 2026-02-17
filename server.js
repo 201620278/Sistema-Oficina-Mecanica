@@ -1456,7 +1456,13 @@ app.post('/api/transacoes', (req, res) => {
     }
 
     const descricao = transacao.descricao || '';
-    const status = transacao.status || 'pendente';
+    // Se for contas a pagar e pagamento à vista, status deve ser 'pago'
+    let status = transacao.status || 'pendente';
+    const tipoTransacao = (transacao.tipo || '').toLowerCase();
+    const formaPag = (transacao.formaPagamento || transacao.forma_pagamento || '').toLowerCase();
+    if ((tipoTransacao === 'pagar' || tipoTransacao === 'contas a pagar' || tipoTransacao === 'contas_pagar') && formaPag === 'à vista') {
+        status = 'pago';
+    }
     const observacoes = transacao.observacoes || '';
     const numeroParcela = transacao.numeroParcela ?? transacao.numero_parcela ?? null;
     const totalParcelas = transacao.totalParcelas ?? transacao.total_parcelas ?? null;
