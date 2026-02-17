@@ -778,9 +778,9 @@
                     </div>
                     
                     <div class="form-group">
-                        <label for="tipo-pagar">Tipo</label>
+                        <label for="tipo-pagar">Tipo de Pagamento</label>
                         <select id="tipo-pagar" onchange="toggleQuantidadeParcelas(); setTimeout(atualizarDetalhamentoParcelas, 100);">
-                            <option value="normal">Pag. a vista</option>
+                            <option value="normal">A vista</option>
                             <option value="parcelado">Parcelado</option>
                             <option value="entrada-parcelado">Entrada + Parcelamento</option>
                         </select>
@@ -789,17 +789,17 @@
                     <div class="form-row">
                         <div class="form-group">
                             <label for="valor-pagar">Valor Total *</label>
-                            <input type="number" id="valor-pagar" step="0.01" min="0.01" required onchange="atualizarDetalhamentoParcelas()" oninput="atualizarDetalhamentoParcelas()">
+                            <input type="number" id="valor-pagar" name="valor-pagar" step="0.01" min="0.01" required onchange="atualizarDetalhamentoParcelas()" oninput="atualizarDetalhamentoParcelas()">
                         </div>
                         
                         <div class="form-group" id="campo-entrada-pagar" style="display: none;">
                             <label for="valor-entrada">Valor da Entrada *</label>
-                            <input type="number" id="valor-entrada" step="0.01" min="0.01" onchange="atualizarDetalhamentoParcelas()" oninput="atualizarDetalhamentoParcelas()" placeholder="Valor em R$">
+                            <input type="number" id="valor-entrada" name="valor-entrada" step="0.01" min="0.01" onchange="atualizarDetalhamentoParcelas()" oninput="atualizarDetalhamentoParcelas()" placeholder="Valor em R$">
                         </div>
                         
                         <div class="form-group" id="campo-quantidade-parcelas" style="display: none;">
                             <label for="quantidade-parcelas">Quantidade de Parcelas *</label>
-                            <input type="number" id="quantidade-parcelas" min="1" max="120" step="1" onchange="atualizarDetalhamentoParcelas()" oninput="atualizarDetalhamentoParcelas()">
+                            <input type="number" id="quantidade-parcelas" name="quantidade-parcelas" min="1" max="120" step="1" onchange="atualizarDetalhamentoParcelas()" oninput="atualizarDetalhamentoParcelas()">
                         </div>
                     </div>
                     
@@ -877,7 +877,6 @@
                         <label>Observações:</label>
                         <span id="resumo-observacoes"></span>
                     </div>
-                </input>
                 <div class="modal-actions">
                     <button class="btn btn-success" onclick="ui.marcarComoPagoPagarDoResumo()" id="btn-marcar-pago">
                         <i class="fas fa-check"></i> Marcar como Pago
@@ -973,6 +972,36 @@
                                 ...d,
                                 id: String(d.id)
                             }));
+
+                            // Preservar campos locais importantes (ex: fornecedor, parcela, parcelado)
+                            // caso o servidor não retorne esses campos. Isso evita que o nome do
+                            // fornecedor desapareça após sincronização/refresh.
+                            try {
+                                const locaisPagar = this.getAllSync('pagar') || [];
+                                for (let i = 0; i < pagar.length; i++) {
+                                    const s = pagar[i];
+                                    const local = locaisPagar.find(lp => String(lp.id) === String(s.id));
+                                    if (!local) continue;
+
+                                    // Lista de campos que queremos preservar do local caso ausentes no servidor
+                                    const preserve = ['fornecedor', 'fornecedorNome', 'fornecedor_nome', 'parcela', 'parcelado', 'numParcelas', 'total_parcelas', 'parcela_de', 'parcela_numero', 'parcela_num'];
+                                    for (const k of preserve) {
+                                        try {
+                                            if ((s[k] === undefined || s[k] === null || s[k] === '') && (local[k] !== undefined)) {
+                                                s[k] = local[k];
+                                            }
+                                        } catch (e) { /* ignore */ }
+                                    }
+
+                                    // Se fornecedor no servidor for um id numérico, mas local tem um nome/objeto,
+                                    // e o servidor não trouxe o nome, preferir manter o valor local.
+                                    if ((s.fornecedor === undefined || s.fornecedor === null || s.fornecedor === '') && local.fornecedor) {
+                                        s.fornecedor = local.fornecedor;
+                                    }
+                                }
+                            } catch (mergePreserveErr) {
+                                console.warn('Erro ao preservar campos locais em pagar:', mergePreserveErr);
+                            }
                             
                             console.log(`Recebimentos do servidor: ${receber.length}, Pagamentos: ${pagar.length}`);
                             
@@ -1000,9 +1029,76 @@
                                     }
                                 });
 
-                                localStorage.setItem(this.storageKeys.receber, JSON.stringify(receber));
-                                localStorage.setItem(this.storageKeys.pagar, JSON.stringify(pagar));
-                                console.log('Dados do servidor aplicados ao cache local (itens locais não-sincronizados preservados)');
+                                // Antes de sobrescrever o pagar no localStorage, preservar campos locais
+                                // importantes (como fornecedor/parcela) quando o servidor não os enviar.
+                                try {
+                                    const locaisPagarMap = {};
+                                    locaisPagar.forEach(lp => { try { locaisPagarMap[String(lp.id)] = lp; } catch(e){} });
+
+                                    const heuristicaMatch = (serverItem, localItem) => {
+                                        if (!serverItem || !localItem) return false;
+                                        try {
+                                            const sDesc = String((serverItem.descricao || '')).trim().toLowerCase();
+                                            const lDesc = String((localItem.descricao || '')).trim().toLowerCase();
+                                            const sVal = Number(serverItem.valor || 0);
+                                            const lVal = Number(localItem.valor || 0);
+                                            const sVen = String(serverItem.vencimento || '').trim();
+                                            const lVen = String(localItem.vencimento || '').trim();
+                                            // match por descrição+valor+vencimento quando ids diferentes
+                                            return (sDesc && lDesc && sDesc === lDesc && Math.abs(sVal - lVal) < 0.01 && sVen && lVen && sVen === lVen);
+                                        } catch (e) { return false; }
+                                    };
+
+                                    const preserveFields = ['fornecedor','fornecedorNome','fornecedor_nome','parcela','parcelado','numParcelas','total_parcelas','totalParcelas','parcela_de'];
+
+                                    const mergedPagar = pagar.map(s => {
+                                        try {
+                                            // localizar local correspondente por id primeiro
+                                            let local = locaisPagarMap[String(s.id)];
+                                            if (!local) {
+                                                // tentar encontrar por heurística
+                                                for (const lp of locaisPagar) {
+                                                    if (heuristicaMatch(s, lp)) { local = lp; break; }
+                                                }
+                                            }
+
+                                            if (local) {
+                                                for (const f of preserveFields) {
+                                                    try {
+                                                        const sv = s[f];
+                                                        const lv = local[f];
+                                                        if ((sv === undefined || sv === null || String(sv).trim() === '') && (lv !== undefined && lv !== null && String(lv).trim() !== '')) {
+                                                            s[f] = lv;
+                                                        }
+                                                    } catch(e){}
+                                                }
+                                                // se fornecedor vazio no servidor mas local tem nome/objeto, copiar
+                                                if ((s.fornecedor === undefined || s.fornecedor === null || String(s.fornecedor).trim() === '') && local.fornecedor) {
+                                                    s.fornecedor = local.fornecedor;
+                                                }
+                                            }
+                                        } catch(e){ /* ignore per-item merge errors */ }
+                                        return s;
+                                    });
+
+                                    // manter itens locais não-sincronizados (ids temporários) ou não presentes no servidor
+                                    const idsPagarServer = new Set(mergedPagar.map(p => String(p.id)));
+                                    locaisPagar.forEach(item => {
+                                        const iid = String(item.id || '');
+                                        const isNumeric = /^\d+$/.test(iid);
+                                        if (!isNumeric || !idsPagarServer.has(iid)) {
+                                            mergedPagar.push(item);
+                                        }
+                                    });
+
+                                    localStorage.setItem(this.storageKeys.receber, JSON.stringify(receber));
+                                    localStorage.setItem(this.storageKeys.pagar, JSON.stringify(mergedPagar));
+                                    console.log('Dados do servidor aplicados ao cache local (itens locais não-sincronizados preservados e campos locais preservados)');
+                                } catch (mergeFinalErr) {
+                                    console.warn('Erro ao finalizar mesclagem de pagar, usando substituição direta:', mergeFinalErr);
+                                    localStorage.setItem(this.storageKeys.receber, JSON.stringify(receber));
+                                    localStorage.setItem(this.storageKeys.pagar, JSON.stringify(pagar));
+                                }
                             } catch (mergeErr) {
                                 console.warn('Erro ao mesclar dados locais com servidor, sobrescrevendo localStorage:', mergeErr);
                                 localStorage.setItem(this.storageKeys.receber, JSON.stringify(receber));
@@ -1059,6 +1155,31 @@
                     if (!body.vencimento) {
                         body.vencimento = body.data || new Date().toISOString().split('T')[0];
                     }
+
+                    // Detectar pagamento à vista (diversas variações de campo/strings)
+                    try {
+                        const detectPagamentoAVista = (obj) => {
+                            if (!obj) return false;
+                            const candidates = [obj.tipo, obj.forma, obj.formaPagamento, obj.modo, obj.metodo, obj.tipoPagamento, obj.pagamentoTipo];
+                            for (const c of candidates) {
+                                if (!c) continue;
+                                const s = String(c).toLowerCase();
+                                if (/\bavista\b|\bà vista\b|\ba vista\b|pag(amento)?\s*a\s*vista|pag\.\s*avista/i.test(s)) return true;
+                                if (s.indexOf('avista') !== -1) return true;
+                            }
+                            // Também considerar quando explicitamente marcado como não-parcelado
+                            if (obj.parcelado === false || obj.parcelado === 'false') return true;
+                            const np = Number(obj.numParcelas || obj.total_parcelas || obj.totalParcelas || 0);
+                            if (np === 1) return true;
+                            return false;
+                        };
+
+                        if (store === 'pagar' && detectPagamentoAVista(body)) {
+                            body.status = 'pago';
+                            if (!body.dataPagamento) body.dataPagamento = new Date().toISOString().split('T')[0];
+                            body.parcelado = false;
+                        }
+                    } catch (e) { /* ignore detection errors */ }
                     
                     // Capturar id local antes do POST para possibilitar substituição posterior
                     const originalLocalId = data.id ? String(data.id) : null;
@@ -1243,6 +1364,30 @@
                     const endpoint = `/api/financeiro/${id}`;
                     const body = { tipo: store, ...data };
                     
+                    // Detectar pagamento à vista também ao atualizar
+                    try {
+                        const detectPagamentoAVista = (obj) => {
+                            if (!obj) return false;
+                            const candidates = [obj.tipo, obj.forma, obj.formaPagamento, obj.modo, obj.metodo, obj.tipoPagamento, obj.pagamentoTipo];
+                            for (const c of candidates) {
+                                if (!c) continue;
+                                const s = String(c).toLowerCase();
+                                if (/\bavista\b|\bà vista\b|\ba vista\b|pag(amento)?\s*a\s*vista|pag\.\s*avista/i.test(s)) return true;
+                                if (s.indexOf('avista') !== -1) return true;
+                            }
+                            if (obj.parcelado === false || obj.parcelado === 'false') return true;
+                            const np = Number(obj.numParcelas || obj.total_parcelas || obj.totalParcelas || 0);
+                            if (np === 1) return true;
+                            return false;
+                        };
+
+                        if (store === 'pagar' && detectPagamentoAVista(body)) {
+                            body.status = 'pago';
+                            if (!body.dataPagamento) body.dataPagamento = new Date().toISOString().split('T')[0];
+                            body.parcelado = false;
+                        }
+                    } catch (e) { /* ignore */ }
+
                     // Só tentar PUT no servidor se o id for numérico (server id). Se for id temporário, enfileirar para POST posteriormente.
                     const isNumericId = String(id).match(/^\d+$/);
                     if (isNumericId && navigator.onLine) {
@@ -2018,10 +2163,111 @@
                 this.clienteSelecionado = null;
             }
 
+            // Verifica IDs duplicados no DOM e loga avisos (ajuda a detectar conflitos de ID)
+            warnDuplicateIds() {
+                try {
+                    const all = document.querySelectorAll('[id]');
+                    const map = Object.create(null);
+                    all.forEach(el => {
+                        const id = el.id;
+                        if (!id) return;
+                        if (!map[id]) map[id] = [];
+                        map[id].push(el);
+                    });
+                    Object.keys(map).forEach(id => {
+                        if (map[id].length > 1) {
+                            console.warn(`ID duplicado detectado: '${id}' (${map[id].length} ocorrências)`);
+                        }
+                    });
+                } catch (e) {
+                    console.warn('Erro ao verificar IDs duplicados:', e);
+                }
+            }
+
             async init() {
                 await this.db.init();
                 await this.migrarClientesFinanceiro();
+                // Normalizar registros de 'pagar' para garantir campo fornecedor
+                await this.migrarFornecedoresPagar();
+                // Checar IDs duplicados no DOM (ajuda diagnóstico)
+                try { this.warnDuplicateIds(); } catch(e){}
                 this.carregarReceber();
+            }
+
+            // Migração: preenche campo `fornecedor` em itens de 'pagar' quando ausente
+            async migrarFornecedoresPagar() {
+                try {
+                    const key = this.db.storageKeys.pagar;
+                    let itens = this.db.getAllSync('pagar') || [];
+                    if (!Array.isArray(itens) || itens.length === 0) return;
+
+                    const clientes = this.db.getAllSync('clientes') || [];
+                    let changed = false;
+
+                    const resolveNome = (it) => {
+                        if (!it) return null;
+                        if (typeof it.fornecedor === 'object' && it.fornecedor) {
+                            return it.fornecedor.nome || it.fornecedor.nomeFantasia || it.fornecedor.razao || String(it.fornecedor.id || null);
+                        }
+                        const cand = it.fornecedor || it.fornecedorNome || it.fornecedor_nome || it.fornecedor_id || it.fornecedorId || it.cliente || it.clienteId;
+                        if (cand) {
+                            const s = String(cand).trim();
+                            if (!s) return null;
+                            if (/^\d+$/.test(s)) {
+                                const found = clientes.find(c => String(c.id) === s || String(c.id) === String(Number(s)));
+                                if (found) return found.nome || found.nomeFantasia || found.razao || String(found.id);
+                            }
+                            if (s.toLowerCase() !== 'undefined' && s.toLowerCase() !== 'null') return s;
+                        }
+                        return null;
+                    };
+
+                    for (let i = 0; i < itens.length; i++) {
+                        const it = itens[i];
+                        const atual = it.fornecedor;
+                        if (atual && String(atual).trim() !== '' && String(atual).toLowerCase() !== 'undefined') continue;
+                        const nome = resolveNome(it);
+                        if (nome) {
+                            itens[i].fornecedor = nome;
+                            changed = true;
+                        }
+                    }
+
+                    if (changed) {
+                        try {
+                            localStorage.setItem(key, JSON.stringify(itens));
+                            console.log('Migração: preencher campo fornecedor em pagar concluída (itens atualizados)');
+                        } catch (e) { console.warn('Migração: falha ao gravar localStorage pagar:', e); }
+                    } else {
+                        console.log('Migração: nenhum item de pagar necessário atualizar');
+                    }
+
+                    // Recarregar view
+                    try { this.carregarPagar(); } catch(e){}
+                } catch (err) {
+                    console.warn('Erro em migrarFornecedoresPagar:', err);
+                }
+            }
+
+            // Salva fornecedor manualmente para um item de 'pagar' (chamado pela UI quando usuário preenche)
+            async salvarFornecedorParaPagar(itemId) {
+                try {
+                    const input = document.getElementById('forn-input-' + itemId);
+                    if (!input) { showToast('Campo de fornecedor não encontrado', 'error'); return; }
+                    const nome = String(input.value || '').trim();
+                    if (!nome) { showToast('Informe um nome de fornecedor válido', 'warning'); return; }
+
+                    const item = await this.db.get('pagar', itemId);
+                    if (!item) { showToast('Registro não encontrado', 'error'); return; }
+
+                    item.fornecedor = nome;
+                    await this.db.put('pagar', item);
+                    showToast('Fornecedor atualizado', 'success');
+                    this.carregarPagar();
+                } catch (err) {
+                    console.error('Erro ao salvar fornecedor para pagar:', err);
+                    showToast('Erro ao salvar fornecedor', 'error');
+                }
             }
 
             // Tentativa de migrar clientes do localStorage (index.html) para o storage usado por este módulo
@@ -2384,16 +2630,72 @@
 
             async carregarPagar() {
                 const pagar = await this.db.getAll('pagar');
+                console.log('[CARREGAR PAGAR] Total de registros:', pagar.length);
+                console.log('[CARREGAR PAGAR] Dados:', pagar);
+                
                 const tabela = document.getElementById('tabela-pagar');
                 let html = '';
                 
                 pagar.forEach(item => {
+                    // Resolver nome do fornecedor a partir de diferentes formatos possíveis
+                    const resolveFornecedorNome = (it) => {
+                        if (!it) return '-';
+                        // Se for objeto fornecedor
+                        if (typeof it.fornecedor === 'object' && it.fornecedor !== null) {
+                            return it.fornecedor.nome || it.fornecedor.nomeFantasia || it.fornecedor.razao || String(it.fornecedor.id || '-') ;
+                        }
+                        // Campos esperados que podem vir do servidor
+                        const candidates = [
+                            it.fornecedor,
+                            it.fornecedorNome,
+                            it.fornecedor_nome,
+                            it.fornecedorNomeFantasia,
+                            it.fornecedor_nome_fantasia,
+                            it.fornecedor_id,
+                            it.fornecedorId,
+                            it.fornecedorIdString,
+                            it.fornecedorId_str
+                        ];
+
+                        for (const c of candidates) {
+                            if (c === null || c === undefined) continue;
+                            const s = String(c).trim();
+                            if (!s) continue;
+                            // se for id numérico, tentar buscar no cadastro de clientes/fornecedores
+                            if (/^\d+$/.test(s)) {
+                                try {
+                                    const clientes = this.db.getAllSync('clientes') || [];
+                                    const found = clientes.find(cl => String(cl.id) === s || String(cl.id) === String(Number(s)));
+                                    if (found) return found.nome || found.nomeFantasia || found.razao || String(found.id);
+                                } catch (e) {
+                                    // ignore
+                                }
+                            }
+                            if (s.toLowerCase() !== 'undefined' && s.toLowerCase() !== 'null') return s;
+                        }
+
+                        // Tentativa final: procurar por clave cliente/fornecedor id e buscar nome
+                        const fid = it.fornecedorId || it.fornecedor_id || it.fornecedorid || it.fornecedorIdString;
+                        if (fid) {
+                            const s = String(fid).trim();
+                            if (/^\d+$/.test(s)) {
+                                const clientes = this.db.getAllSync('clientes') || [];
+                                const found = clientes.find(cl => String(cl.id) === s || String(cl.id) === String(Number(s)));
+                                if (found) return found.nome || found.nomeFantasia || found.razao || String(found.id);
+                            }
+                        }
+
+                        return '-';
+                    };
+
+                    const fornecedorNome = resolveFornecedorNome(item);
+                    console.log('[ITEM PAGAR]', 'Fornecedor resolvido:', fornecedorNome, 'Item:', item);
                     html += `
                         <tr onclick="ui.visualizarFornecedor('${item.id}')">
-                            <td>${item.fornecedor}</td>
+                            <td>${fornecedorNome === '-' ? (`<div style="display:flex;gap:6px;align-items:center"><input id="forn-input-${item.id}" style="min-width:140px;padding:6px;border-radius:4px;border:1px solid #ddd" placeholder="Informe fornecedor" value=""><button class="btn btn-sm btn-primary" onclick="event.stopPropagation(); ui.salvarFornecedorParaPagar('${item.id}')">Salvar</button></div>`) : fornecedorNome}</td>
                             <td>${item.descricao}</td>
                             <td>${item.parcela || '1/1'}</td>
-                            <td>R$ ${item.valor.toFixed(2)}</td>
+                            <td>R$ ${Number(item.valor || 0).toFixed(2)}</td>
                             <td>${this.formatarData(item.vencimento)}</td>
                             <td>${this.criarBadgeStatus(item)}</td>
                             <td onclick="event.stopPropagation();">
@@ -3028,7 +3330,11 @@
                 const valorTotal = this.orcamentoAtual.valorTotal;
                 
                 if (tipoPagamento === 'parcelado') {
-                    const numParcelas = parseInt(document.getElementById('numero-parcelas').value);
+                    let numParcelas = parseInt(document.getElementById('numero-parcelas').value);
+                    if (!Number.isFinite(numParcelas) || numParcelas <= 0) {
+                        showToast('Informe um número de parcelas válido (>=1).', 'warning');
+                        return;
+                    }
                     const dataPrimeira = document.getElementById('data-primeira-parcela').value;
                     
                     if (!dataPrimeira) return;
@@ -3135,6 +3441,10 @@
             gerarParcelasPagarParaSalvar(fornecedor, descricao, valor, vencimento, tipo, quantidadeParcelas, observacoes) {
                 const parcelas = [];
                 const dataPrimeira = new Date(vencimento);
+
+                // Garantir nome do fornecedor: usar valor do parâmetro, senão tentar fornecedorAtual da UI
+                const fornecedorNome = fornecedor || (this.fornecedorAtual && (this.fornecedorAtual.nome || this.fornecedorAtual.nomeFantasia || this.fornecedorAtual.razao)) || '-';
+                console.log('[GERAR PARCELAS PAGAR] Fornecedor (resolvido):', fornecedorNome, 'Tipo:', tipo, 'Qtd:', quantidadeParcelas);
                 
                 if (tipo === 'parcelado') {
                     const valorParcela = valor / quantidadeParcelas;
@@ -3143,9 +3453,8 @@
                         const dataVencimento = new Date(dataPrimeira);
                         dataVencimento.setMonth(dataVencimento.getMonth() + (i - 1));
                         
-                        parcelas.push({
-                            id: `pagar-${Date.now()}-${i}`,
-                            fornecedor: fornecedor,
+                        const parcela = {
+                            fornecedor: fornecedorNome,
                             descricao: descricao,
                             valor: Number(valorParcela.toFixed(2)),
                             vencimento: dataVencimento.toISOString().split('T')[0],
@@ -3155,7 +3464,10 @@
                             quantidadeParcelas: quantidadeParcelas,
                             data: new Date().toISOString().split('T')[0],
                             observacoes: observacoes || ''
-                        });
+                        };
+                        
+                        console.log('[PARCELA CRIADA]', parcela);
+                        parcelas.push(parcela);
                     }
                     
                 } else if (tipo === 'entrada-parcelado') {
@@ -3165,9 +3477,8 @@
                     
                     // Salvar entrada com status pago (hoje)
                     if (valorEntrada > 0) {
-                        parcelas.push({
-                            id: `pagar-${Date.now()}-entrada`,
-                            fornecedor: fornecedor,
+                        const entradaParcela = {
+                            fornecedor: fornecedorNome,
                             descricao: descricao,
                             valor: Number(valorEntrada.toFixed(2)),
                             vencimento: new Date().toISOString().split('T')[0],
@@ -3179,7 +3490,10 @@
                             dataPagamento: new Date().toISOString().split('T')[0],
                             data: new Date().toISOString().split('T')[0],
                             observacoes: observacoes || ''
-                        });
+                        };
+                        
+                        console.log('[ENTRADA CRIADA]', entradaParcela);
+                        parcelas.push(entradaParcela);
                     }
                     
                     // Salvar parcelas restantes
@@ -3190,9 +3504,8 @@
                         const dataVencimento = new Date(dataProximaMes);
                         dataVencimento.setMonth(dataVencimento.getMonth() + (i - 1));
                         
-                        parcelas.push({
-                            id: `pagar-${Date.now()}-${i}`,
-                            fornecedor: fornecedor,
+                        const parcela = {
+                            fornecedor: fornecedorNome,
                             descricao: descricao,
                             valor: Number(valorParcela.toFixed(2)),
                             vencimento: dataVencimento.toISOString().split('T')[0],
@@ -3203,10 +3516,14 @@
                             valorEntrada: Number(valorEntrada.toFixed(2)),
                             data: new Date().toISOString().split('T')[0],
                             observacoes: observacoes || ''
-                        });
+                        };
+                        
+                        console.log('[PARCELA CRIADA]', parcela);
+                        parcelas.push(parcela);
                     }
                 }
                 
+                console.log('[TOTAL PARCELAS GERADAS]', parcelas.length, parcelas);
                 return parcelas;
             }
 
@@ -3435,6 +3752,8 @@
                     const observacoes = document.getElementById('observacoes-pagar').value;
                     const quantidadeParcelas = (tipo === 'parcelado' || tipo === 'entrada-parcelado') ? parseInt(document.getElementById('quantidade-parcelas').value) : 1;
                     
+                    console.log('[SALVAR PAGAMENTO] Fornecedor:', fornecedor, 'Tipo:', tipo);
+                    
                     // Gerar parcelas se for parcelado ou entrada-parcelado
                     if (tipo === 'parcelado' || tipo === 'entrada-parcelado') {
                         const parcelas = this.gerarParcelasPagarParaSalvar(
@@ -3447,9 +3766,17 @@
                             observacoes
                         );
                         
+                        console.log('[SALVAR PAGAMENTO] Parcelas a salvar:', parcelas);
+                        
                         // Salvar cada parcela como um registro separado
                         for (const parcela of parcelas) {
-                            await this.db.add('pagar', parcela);
+                            // Garantir que o campo fornecedor esteja sempre preenchido
+                            if (!parcela.fornecedor || String(parcela.fornecedor).trim() === '' || String(parcela.fornecedor).toLowerCase() === 'undefined') {
+                                parcela.fornecedor = fornecedor || (this.fornecedorAtual && (this.fornecedorAtual.nome || this.fornecedorAtual.nomeFantasia || this.fornecedorAtual.razao)) || '-';
+                            }
+
+                            const idSalvo = await this.db.add('pagar', parcela);
+                            console.log('[PARCELA SALVA] ID:', idSalvo, 'Fornecedor:', parcela.fornecedor);
                         }
                         
                         showToast(`Pagamento salvo em ${quantidadeParcelas} parcela(s)!`, 'success');
@@ -3466,6 +3793,8 @@
                             quantidadeParcelas: 1,
                             observacoes: observacoes
                         };
+                        
+                        console.log('[SALVAR PAGAMENTO À VISTA]', pagamento);
                         
                         await this.db.add('pagar', pagamento);
                         showToast('Pagamento salvo com sucesso!', 'success');
@@ -4032,8 +4361,9 @@
             // Ocultar tudo inicialmente
             if (campoEntrada) campoEntrada.style.display = 'none';
             if (campoParcelas) campoParcelas.style.display = 'none';
-            inputParcelas.required = false;
-            inputParcelas.value = '';
+            // Garantir que os campos não fiquem com atributo required quando ocultos
+            if (inputEntrada) { inputEntrada.required = false; inputEntrada.value = ''; }
+            if (inputParcelas) { inputParcelas.required = false; inputParcelas.value = ''; }
 
             if (tipo === 'parcelado') {
                 campoParcelas.style.display = 'block';
@@ -4226,8 +4556,8 @@
                         }
                     })
                     .catch(err => {
-                        console.error('Erro ao verificar WhatsApp:', err);
-                        showToast('⚠️ Erro ao verificar se WhatsApp está instalado: ' + err.message, 'error');
+                        console.warn('Erro ao checar /api/whatsapp-status:', err);
+                        showToast('Não foi possível verificar status do WhatsApp.', 'warning');
                     });
             } else {
                 showToast('Telefone ou mensagem inválidos', 'error');

@@ -242,6 +242,7 @@ function inicializarBanco() {
             'ALTER TABLE transacoes ADD COLUMN data_pagamento TEXT',
             'ALTER TABLE transacoes ADD COLUMN grupo_parcelamento_id TEXT',
             'ALTER TABLE transacoes ADD COLUMN updated_at DATETIME'
+            , 'ALTER TABLE transacoes ADD COLUMN fornecedor TEXT'
         ];
 
         transacaoColumnsToAdd.forEach(sql => {
@@ -2495,7 +2496,7 @@ app.get('/api/financeiro', (req, res) => {
     db.all(`SELECT 
         id, descricao, tipo, valor, data, status, orcamento_id, cliente_id, 
         numero_parcela, total_parcelas, forma_pagamento, vencimento, data_pagamento,
-        observacoes, created_at, updated_at
+        observacoes, created_at, updated_at, fornecedor
     FROM transacoes 
     WHERE tipo IN ('receber', 'pagar') 
     ORDER BY data DESC`, [], (err, rows) => {
@@ -2516,7 +2517,8 @@ app.get('/api/financeiro', (req, res) => {
                     clienteId: row.cliente_id,
                     formaPagamento: row.forma_pagamento,
                     dataPagamento: row.data_pagamento,
-                    grupoParcelamentoId: row.grupo_parcelamento_id
+                    grupoParcelamentoId: row.grupo_parcelamento_id,
+                    fornecedor: row.fornecedor
                 };
                 return normalizeFinanceiroRow(mapped);
             } catch (e) {
@@ -2666,6 +2668,7 @@ app.put('/api/financeiro/:id', (req, res) => {
                     descricao = ?,
                     observacoes = ?,
                     data_pagamento = ?,
+                    fornecedor = ?,
                     grupo_parcelamento_id = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?`;
@@ -2675,6 +2678,7 @@ app.put('/api/financeiro/:id', (req, res) => {
                     entrada.descricao || '',
                     entrada.observacoes || '',
                     entrada.dataPagamento || null,
+                    entrada.fornecedor || entrada.fornecedorNome || entrada.fornecedor_nome || null,
                     entrada.grupoParcelamentoId || null,
                     id
                 ];
@@ -2699,6 +2703,7 @@ app.put('/api/financeiro/:id', (req, res) => {
             descricao = ?,
             observacoes = ?,
             data_pagamento = ?,
+            fornecedor = ?,
             grupo_parcelamento_id = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?`;
@@ -2708,6 +2713,7 @@ app.put('/api/financeiro/:id', (req, res) => {
             entrada.descricao || '',
             entrada.observacoes || '',
             entrada.dataPagamento || null,
+            entrada.fornecedor || entrada.fornecedorNome || entrada.fornecedor_nome || null,
             entrada.grupoParcelamentoId || null,
             id
         ];
@@ -2782,7 +2788,7 @@ app.get('/api/financeiro/:tipo', (req, res) => {
     db.all(`SELECT 
         id, descricao, tipo, valor, data, status, orcamento_id, cliente_id, 
         numero_parcela, total_parcelas, forma_pagamento, vencimento, data_pagamento,
-        observacoes, created_at, updated_at, grupo_parcelamento_id
+        observacoes, created_at, updated_at, grupo_parcelamento_id, fornecedor
     FROM transacoes 
     WHERE tipo = ? 
     ORDER BY vencimento DESC`, [tipo], (err, rows) => {
@@ -2790,7 +2796,7 @@ app.get('/api/financeiro/:tipo', (req, res) => {
             res.status(500).json({ error: err.message });
             return;
         }
-        const dados = rows.map(row => ({
+            const dados = rows.map(row => ({
             id: row.id ? String(row.id) : null,
             descricao: row.descricao,
             tipo: row.tipo,
@@ -2806,7 +2812,8 @@ app.get('/api/financeiro/:tipo', (req, res) => {
             dataPagamento: row.data_pagamento,
             observacoes: row.observacoes,
             createdAt: row.created_at,
-            grupoParcelamentoId: row.grupo_parcelamento_id
+            grupoParcelamentoId: row.grupo_parcelamento_id,
+            fornecedor: row.fornecedor
         }));
         res.json(dados);
     });
@@ -2895,6 +2902,14 @@ app.post('/api/financeiro', (req, res) => {
                 }
             }
         }
+
+        // NOVO: Se for à vista, status = 'pago'
+        if (entrada && entrada.formaPagamento) {
+            const fp = String(entrada.formaPagamento).normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+            if (fp === 'avista' || fp === 'a vista' || fp === 'à vista') {
+                entrada.status = 'pago';
+            }
+        }
     } catch (normErr) {
         console.warn('Erro ao normalizar entrada /api/financeiro:', normErr.message);
     }
@@ -2942,8 +2957,8 @@ app.post('/api/financeiro', (req, res) => {
     function inserirEntrada() {
         const sql = `INSERT INTO transacoes (
             tipo, valor, descricao, status, data, vencimento, 
-            orcamento_id, cliente_id, observacoes, forma_pagamento, criado_em, grupo_parcelamento_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+            orcamento_id, cliente_id, observacoes, forma_pagamento, criado_em, grupo_parcelamento_id, fornecedor
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
         const params = [
             entrada.tipo,
@@ -2957,7 +2972,8 @@ app.post('/api/financeiro', (req, res) => {
             entrada.observacoes || '',
             entrada.formaPagamento || '',
             new Date().toISOString(),
-            entrada.grupoParcelamentoId || null
+            entrada.grupoParcelamentoId || null,
+            entrada.fornecedor || entrada.fornecedorNome || entrada.fornecedor_nome || null
         ];
 
         db.run(sql, params, function(err) {
