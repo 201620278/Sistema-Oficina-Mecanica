@@ -215,13 +215,21 @@
             </div>
             <div class="mb-16">
                 <div style="display:flex;align-items:center;gap:12px">
-                    <div id="card-total-pagar" style="background:#fff;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.06);min-width:200px">
-                        <strong>Total a Pagar:</strong>
+                    <div id="card-total-pagar" style="background:#fff;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.06);min-width:220px">
+                        <strong id="label-total-pagar">Total a Pagar:</strong>
                         <div id="total-pagar" style="font-size:18px;margin-top:6px">R$ 0,00</div>
                     </div>
-                    <div id="card-total-pagar-vencido" style="background:#fff;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.06);min-width:220px">
+                    <div id="card-total-pagar-vencido" style="background:#fff;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.06);min-width:220px;display:none;">
                         <strong>Total Vencido:</strong>
                         <div id="total-pagar-vencido" style="font-size:18px;margin-top:6px;color:#c0392b">R$ 0,00</div>
+                    </div>
+                    <div id="card-total-pago-mes" style="background:#eafaf1;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.06);min-width:220px">
+                        <strong id="label-total-pago-mes">Total Pago no mês:</strong>
+                        <div id="total-pago-mes" style="font-size:18px;margin-top:6px;color:#27ae60">R$ 0,00</div>
+                    </div>
+                    <div id="card-total-pago-acumulado" style="background:#f8f8ff;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.06);min-width:220px">
+                        <strong>Total Pago até hoje:</strong>
+                        <div id="total-pago-acumulado" style="font-size:18px;margin-top:6px;color:#2980b9">R$ 0,00</div>
                     </div>
                 </div>
             </div>
@@ -1907,7 +1915,20 @@
                                 const parsedText = await response.text().catch(() => null);
                                 let parsed = null;
                                 try { parsed = parsedText ? JSON.parse(parsedText) : null; } catch(e){ parsed = null; }
+
                                 console.warn('Fila: POST retornou erro', response.status, parsed || parsedText);
+
+                                // Se for 404, remover da fila (registro não existe no servidor)
+                                if (response.status === 404) {
+                                    console.warn(`Fila: item ${q.id} retornou 404 — removendo da fila.`);
+                                    qArr = db._getSyncQueue();
+                                    const idxNow = qArr.findIndex(x => String(x.id) === String(q.id));
+                                    if (idxNow >= 0) {
+                                        qArr.splice(idxNow, 1);
+                                        db._setSyncQueue(qArr);
+                                    }
+                                    continue;
+                                }
 
                                 // Se for conflito (409), provavelmente já existe no servidor — remover do queue
                                 if (response.status === 409) {
@@ -2858,10 +2879,11 @@
                     // Sincronizar com o servidor somente se este registro já existir no servidor
                     // (IDs do servidor são numéricos). Para IDs locais, `this.db.put` já
                     // enfileira a operação para sincronização posterior.
-                    const isServerId = /^\d+$/.test(String(duplicata.id));
+                    const idServidor = String(duplicata.id).split(':')[0];
+                    const isServerId = /^\d+$/.test(idServidor);
                     if (isServerId && navigator.onLine) {
                         try {
-                            const resp = await fetch(`/api/financeiro/${duplicata.id}`, {
+                            const resp = await fetch(`/api/financeiro/${idServidor}`, {
                                 method: 'PUT',
                                 headers: { 'Content-Type': 'application/json' },
                                 body: JSON.stringify({
@@ -2947,6 +2969,7 @@
                     this.carregarPagar();
                     this.carregarDadosDashboard();
                     hideModal('modal-visualizar-fornecedor');
+                    try { filtrarPagar(); } catch(e) { /* ignora se função não existir */ }
                 } catch (error) {
                     console.error('Erro ao deletar pagamento:', error);
                     showToast('Erro ao deletar pagamento', 'error');
@@ -4014,10 +4037,7 @@
             }
             
             // Configurar data padrão para vencimento de pagamento (30 dias)
-            const vencimentoPagar = document.getElementById('vencimento-pagar');
-            if (vencimentoPagar) {
-                vencimentoPagar.value = data30dias.toISOString().split('T')[0];
-            }
+            // Removido: configuração global do vencimento-pagar para evitar sobrescrever a data correta ao abrir o modal
             
             // Fechar sugestões ao clicar fora
             document.addEventListener('click', (e) => {
@@ -4244,10 +4264,12 @@
                 if (listaParcelasEl) listaParcelasEl.innerHTML = '';
                 if (tipoPagarEl) tipoPagarEl.value = 'normal';
 
-                // Definir data padrão de vencimento como hoje (YYYY-MM-DD)
                 if (vencimentoPagarEl) {
                     const hoje = new Date();
-                    vencimentoPagarEl.value = hoje.toISOString().split('T')[0];
+                    const ano = hoje.getFullYear();
+                    const mes = String(hoje.getMonth() + 1).padStart(2, '0');
+                    const dia = String(hoje.getDate()).padStart(2, '0');
+                    vencimentoPagarEl.value = `${ano}-${mes}-${dia}`;
                 }
 
                 // Garantir que a UI atualize caso já exista valor/quantidade
@@ -4348,6 +4370,10 @@
         function salvarPagamento(event) {
             event.preventDefault();
             ui.salvarPagamento();
+            // Atualiza os cards de totais após salvar
+            setTimeout(() => {
+                if (typeof filtrarPagar === 'function') filtrarPagar();
+            }, 300);
         }
         
         function toggleQuantidadeParcelas() {
@@ -5219,13 +5245,29 @@
                         const s = st.toString().toLowerCase();
                         return s === 'pago' || s === 'paid' || it.pago === true || it.confirmado === 1 || it.confirmado === '1' || it.dataPagamento || it.data_pagamento || it.confirmadoEm || it.confirmado_em;
                     };
+                    // Nome dos meses em português
+                    const meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+                    const dataAtual = new Date();
+                    const mesAtual = dataAtual.getMonth();
+                    const anoAtual = dataAtual.getFullYear();
+                    // Considera como "a pagar" tudo que não está pago, inclusive status "parcelado", e só do mês corrente
                     const totalPagarFiltrado = filtrados
                         .filter(p => {
-                            // Considera apenas status aberto, pendente ou atrasado
                             const st = (p.status || '').toLowerCase();
-                            return st === 'aberto' || st === 'pendente' || st === 'atrasado';
+                            if (!(st === 'aberto' || st === 'pendente' || st === 'atrasado' || st === 'parcelado')) return false;
+                            // Só do mês e ano corrente
+                            let v = p.vencimento || p.data || p.created_at || p.createdAt || p.criado_em;
+                            if (!v) return false;
+                            const d = new Date(v);
+                            return d.getMonth() === mesAtual && d.getFullYear() === anoAtual;
                         })
                         .reduce((sum, p) => sum + (Number(p.valor) || 0), 0);
+
+                    // Atualizar label do mês
+                    const labelTotalPagar = document.getElementById('label-total-pagar');
+                    if (labelTotalPagar) {
+                        labelTotalPagar.textContent = `Total a Pagar: ${meses[mesAtual]}`;
+                    }
 
                     const hojeZero = new Date(); hojeZero.setHours(0,0,0,0);
                     const parseDateLocal = (v) => {
@@ -5238,13 +5280,56 @@
                     };
                     const totalPagarVencidoFiltrado = filtrados
                         .filter(p => {
-                            // Considera apenas status aberto, pendente ou atrasado
+                            // Considera apenas status aberto, pendente, atrasado ou parcelado
                             const st = (p.status || '').toLowerCase();
-                            if (!(st === 'aberto' || st === 'pendente' || st === 'atrasado')) return false;
+                            if (!(st === 'aberto' || st === 'pendente' || st === 'atrasado' || st === 'parcelado')) return false;
                             const v = parseDateLocal(p.vencimento || p.data || p.created_at || p.createdAt || p.criado_em);
-                            return v && v < hojeZero;
+                            // Só do mês e ano corrente
+                            if (!v || v.getMonth() !== mesAtual || v.getFullYear() !== anoAtual) return false;
+                            return v < hojeZero;
                         })
                         .reduce((s, p) => s + (Number(p.valor) || 0), 0);
+
+                        // Exibir ou esconder o card de vencidos
+                        const cardVencido = document.getElementById('card-total-pagar-vencido');
+                        if (cardVencido) {
+                            if (totalPagarVencidoFiltrado > 0) {
+                                cardVencido.style.display = '';
+                            } else {
+                                cardVencido.style.display = 'none';
+                            }
+                        }
+
+                        // Total pago no mês corrente
+                        const mesAtualPago = dataAtual.getMonth();
+                        const anoAtualPago = dataAtual.getFullYear();
+                        const totalPagoMes = pagar
+                            .filter(p => isPaid(p))
+                            .filter(p => {
+                                const d = parseDateLocal(p.dataPagamento || p.data_pagamento || p.confirmadoEm || p.confirmado_em || p.vencimento || p.data);
+                                return d && d.getMonth() === mesAtualPago && d.getFullYear() === anoAtualPago;
+                            })
+                            .reduce((sum, p) => sum + (Number(p.valor) || 0), 0);
+
+                        // Atualizar label do mês no card de total pago mês
+                        const labelTotalPagoMes = document.getElementById('label-total-pago-mes');
+                        if (labelTotalPagoMes) {
+                            labelTotalPagoMes.textContent = `Total Pago no mês: ${meses[mesAtualPago]}`;
+                        }
+
+                        // Total pago acumulado até hoje
+                        const totalPagoAcumulado = pagar
+                            .filter(p => isPaid(p))
+                            .filter(p => {
+                                const d = parseDateLocal(p.dataPagamento || p.data_pagamento || p.confirmadoEm || p.confirmado_em || p.vencimento || p.data);
+                                return d && d <= hojeZero;
+                            })
+                            .reduce((sum, p) => sum + (Number(p.valor) || 0), 0);
+
+                        const elPagoMes = document.getElementById('total-pago-mes');
+                        const elPagoAcumulado = document.getElementById('total-pago-acumulado');
+                        if (elPagoMes && typeof ui.formatarMoeda === 'function') elPagoMes.textContent = ui.formatarMoeda(totalPagoMes);
+                        if (elPagoAcumulado && typeof ui.formatarMoeda === 'function') elPagoAcumulado.textContent = ui.formatarMoeda(totalPagoAcumulado);
 
                     const elTotal = document.getElementById('total-pagar');
                     const elVenc = document.getElementById('total-pagar-vencido');
