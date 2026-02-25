@@ -5082,7 +5082,7 @@
                     const cardVenc = document.getElementById('card-total-vencido');
                     const labelTotalReceber = document.querySelector('#card-total-receber strong');
                     if (elTotal && typeof ui.formatarMoeda === 'function') elTotal.textContent = ui.formatarMoeda(totalReceberMes);
-                    if (labelTotalReceber) labelTotalReceber.textContent = `Total a Receber: ${mesResumo}${anoResumo ? ' de ' + anoResumo : ''}`;
+                    if (labelTotalReceber) labelTotalReceber.textContent = `Total a Receber: ${mesResumo}`;
                     if (elVenc && typeof ui.formatarMoeda === 'function') elVenc.textContent = ui.formatarMoeda(totalVencidoFiltrado);
                     if (cardTotal) cardTotal.style.border = totalReceberFiltrado > 0 ? '2px solid #27ae60' : '1px solid #eee';
                     if (cardVenc) {
@@ -5093,7 +5093,7 @@
                     const elRecebidoMes = document.getElementById('total-recebido-mes');
                     const labelRecebidoMes = document.getElementById('label-total-recebido-mes');
                     if (elRecebidoMes && typeof ui.formatarMoeda === 'function') elRecebidoMes.textContent = ui.formatarMoeda(totalRecebidoMes);
-                    if (labelRecebidoMes) labelRecebidoMes.textContent = `Total Recebido no mês: ${mesResumo}${anoResumo ? ' de ' + anoResumo : ''}`;
+                    if (labelRecebidoMes) labelRecebidoMes.textContent = `Total Recebido no mês: ${mesResumo}`;
                 } catch (err) { console.warn('Erro ao recalcular totais filtrados:', err); }
 
                 showToast('Filtro aplicado', 'info');
