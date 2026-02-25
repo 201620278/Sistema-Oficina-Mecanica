@@ -2556,7 +2556,18 @@
                     // Após qualquer operação, recarregar lista do servidor para garantir consistência e evitar duplicidade
                     const clientesServidor = await this.apiRequest('/clientes');
                     if (clientesServidor) {
-                        this.dados.clientes = clientesServidor.map(cliente => this.normalizarCliente(cliente));
+                        // Remove duplicatas pelo ID
+                        const normalizados = clientesServidor.map(cliente => this.normalizarCliente(cliente));
+                        const unicos = [];
+                        const ids = new Set();
+                        for (const c of normalizados) {
+                            const id = String(c.id);
+                            if (!ids.has(id)) {
+                                unicos.push(c);
+                                ids.add(id);
+                            }
+                        }
+                        this.dados.clientes = unicos;
                         this.salvarDados('clientes');
                     }
 
@@ -3688,6 +3699,8 @@
                         }
                         
                         if (agendamentoNormalizado) {
+                            // Remove duplicatas antes de adicionar
+                            this.dados.agendamentos = this.dados.agendamentos.filter(a => String(a.id) !== String(agendamentoNormalizado.id));
                             this.dados.agendamentos.push(agendamentoNormalizado);
                             this.salvarDados('agendamentos');
                         }

@@ -1,0 +1,30 @@
+{
+  "module": "orcamentos",
+  "ids": [
+    "10"
+  ],
+  "rows": [
+    {
+      "id": 10,
+      "numero": 0,
+      "cliente_id": 24,
+      "veiculo_id": "veh-novo-1771457479730-0-784",
+      "agendamento_id": 10,
+      "servicos": "[{\"descricao\":\"troca das escovas do motor de partida\",\"quantidade\":1,\"valor\":30}]",
+      "pecas": "[{\"item\":\"escovas do motor de partida\",\"quantidade\":2,\"valor\":50,\"valorTotal\":100}]",
+      "observacoes": "Problema relatado: carro não esta pegando na partida",
+      "validade": 7,
+      "data": "2026-02-19",
+      "desconto": 0,
+      "valor_total": 130,
+      "total": 130,
+      "status": "finalizado",
+      "created_at": "2026-02-19 02:00:49",
+      "updated_at": "2026-02-19 02:22:38",
+      "status_financeiro": "duplicata",
+      "data_duplicata": "2026-02-19",
+      "data_liquidacao": null
+    }
+  ],
+  "created_at": "2026-02-25T02:23:30.399Z"
+}
