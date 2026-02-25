@@ -143,6 +143,10 @@
                         <strong>Total Vencido:</strong>
                         <div id="total-vencido" style="font-size:18px;margin-top:6px;color:#c0392b">R$ 0,00</div>
                     </div>
+                    <div id="card-total-recebido-mes" style="background:#eafaf1;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.06);min-width:220px">
+                        <strong id="label-total-recebido-mes">Total Recebido no mês:</strong>
+                        <div id="total-recebido-mes" style="font-size:18px;margin-top:6px;color:#27ae60">R$ 0,00</div>
+                    </div>
                 </div>
             </div>
 
@@ -1024,15 +1028,16 @@
                                 locaisReceber.forEach(item => {
                                     const iid = String(item.id || '');
                                     const isNumeric = /^\d+$/.test(iid);
-                                    if (!isNumeric || !idsReceberServer.has(iid)) {
-                                        // manter itens locais não-sincronizados (ids temporários) ou não presentes no servidor
+                                    if (!isNumeric) {
+                                        // manter apenas ids temporários (não numéricos)
                                         receber.push(item);
                                     }
                                 });
                                 locaisPagar.forEach(item => {
                                     const iid = String(item.id || '');
                                     const isNumeric = /^\d+$/.test(iid);
-                                    if (!isNumeric || !idsPagarServer.has(iid)) {
+                                    if (!isNumeric) {
+                                        // manter apenas ids temporários (não numéricos)
                                         pagar.push(item);
                                     }
                                 });
@@ -3463,7 +3468,17 @@
 
             gerarParcelasPagarParaSalvar(fornecedor, descricao, valor, vencimento, tipo, quantidadeParcelas, observacoes) {
                 const parcelas = [];
-                const dataPrimeira = new Date(vencimento);
+                // Sempre colocar a primeira parcela para o mês seguinte
+                let dataPrimeira = new Date();
+                dataPrimeira.setMonth(dataPrimeira.getMonth() + 1);
+                // Se o usuário informou uma data de vencimento futura, usar o mês seguinte dessa data
+                if (vencimento) {
+                    const dataVenc = new Date(vencimento);
+                    if (!isNaN(dataVenc.getTime()) && dataVenc > new Date()) {
+                        dataPrimeira = new Date(dataVenc);
+                        dataPrimeira.setMonth(dataPrimeira.getMonth() + 1);
+                    }
+                }
 
                 // Garantir nome do fornecedor: usar valor do parâmetro, senão tentar fornecedorAtual da UI
                 const fornecedorNome = fornecedor || (this.fornecedorAtual && (this.fornecedorAtual.nome || this.fornecedorAtual.nomeFantasia || this.fornecedorAtual.razao)) || '-';
@@ -3471,11 +3486,9 @@
                 
                 if (tipo === 'parcelado') {
                     const valorParcela = valor / quantidadeParcelas;
-                    
                     for (let i = 1; i <= quantidadeParcelas; i++) {
                         const dataVencimento = new Date(dataPrimeira);
                         dataVencimento.setMonth(dataVencimento.getMonth() + (i - 1));
-                        
                         const parcela = {
                             fornecedor: fornecedorNome,
                             descricao: descricao,
@@ -3488,11 +3501,9 @@
                             data: new Date().toISOString().split('T')[0],
                             observacoes: observacoes || ''
                         };
-                        
                         console.log('[PARCELA CRIADA]', parcela);
                         parcelas.push(parcela);
                     }
-                    
                 } else if (tipo === 'entrada-parcelado') {
                     const valorEntrada = parseFloat(document.getElementById('valor-entrada').value) || 0;
                     const valorRestante = valor - valorEntrada;
@@ -4999,8 +5010,21 @@
                         if (!it) return false;
                         const st = (it.status || it.situacao || it.estado || '') + '';
                         const s = st.toString().toLowerCase();
-                        return s === 'pago' || s === 'paid' || it.pago === true || it.confirmado === 1 || it.confirmado === '1' || it.dataPagamento || it.data_pagamento || it.confirmadoEm || it.confirmado_em;
+                        return s === 'pago' || s === 'paid' || it.pago === true || it.confirmado === 1 || it.confirmado === '1' || it.dataPagamento || it.data_pagamento || it.confirmadoEm || it.confirmado_em || (it.recebido === true || it.recebido === 'true');
                     };
+                    // Total a receber do mês/ano filtrado (independente do status do filtro)
+                    const totalReceberMes = receber
+                        .filter(r => {
+                            if (isPaid(r)) return false;
+                            const d = parseDateLocal(r.vencimento || r.data || r.created_at || r.createdAt || r.criado_em);
+                            if (!d) return false;
+                            if (filtroMesVal && (d.getMonth()+1) !== Number(filtroMesVal)) return false;
+                            if (filtroAnoVal && d.getFullYear() !== Number(filtroAnoVal)) return false;
+                            return true;
+                        })
+                        .reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
+
+                    // Total a receber dos itens filtrados (tabela)
                     const totalReceberFiltrado = filtrados
                         .filter(r => !isPaid(r))
                         .reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
@@ -5022,17 +5046,54 @@
                         })
                         .reduce((s, r) => s + (Number(r.valor) || 0), 0);
 
+                    // Novo: total recebido no mês filtrado
+                    const meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+                    const filtroMesVal = (document.getElementById('filter-mes') && document.getElementById('filter-mes').value) || '';
+                    const filtroAnoVal = (document.getElementById('filter-ano') && document.getElementById('filter-ano').value) || '';
+                    let mesResumo, anoResumo;
+                    if (filtroMesVal) {
+                        mesResumo = meses[Number(filtroMesVal)-1] || '';
+                    } else {
+                        const dataAtual = new Date();
+                        mesResumo = meses[dataAtual.getMonth()];
+                    }
+                    if (filtroAnoVal) {
+                        anoResumo = filtroAnoVal;
+                    } else {
+                        const dataAtual = new Date();
+                        anoResumo = dataAtual.getFullYear();
+                    }
+                    // Soma dos recebidos no mês/ano filtrado
+                    const totalRecebidoMes = receber
+                        .filter(r => isPaid(r))
+                        .filter(r => {
+                            const d = parseDateLocal(r.dataPagamento || r.data_pagamento || r.confirmadoEm || r.confirmado_em || r.vencimento || r.data);
+                            if (!d) return false;
+                            if (filtroMesVal && (d.getMonth()+1) !== Number(filtroMesVal)) return false;
+                            if (filtroAnoVal && d.getFullYear() !== Number(filtroAnoVal)) return false;
+                            return true;
+                        })
+                        .reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
+
+                    // Atualizar valores na tela
                     const elTotal = document.getElementById('total-receber');
                     const elVenc = document.getElementById('total-vencido');
                     const cardTotal = document.getElementById('card-total-receber');
                     const cardVenc = document.getElementById('card-total-vencido');
-                    if (elTotal && typeof ui.formatarMoeda === 'function') elTotal.textContent = ui.formatarMoeda(totalReceberFiltrado);
+                    const labelTotalReceber = document.querySelector('#card-total-receber strong');
+                    if (elTotal && typeof ui.formatarMoeda === 'function') elTotal.textContent = ui.formatarMoeda(totalReceberMes);
+                    if (labelTotalReceber) labelTotalReceber.textContent = `Total a Receber: ${mesResumo}${anoResumo ? ' de ' + anoResumo : ''}`;
                     if (elVenc && typeof ui.formatarMoeda === 'function') elVenc.textContent = ui.formatarMoeda(totalVencidoFiltrado);
                     if (cardTotal) cardTotal.style.border = totalReceberFiltrado > 0 ? '2px solid #27ae60' : '1px solid #eee';
                     if (cardVenc) {
                         cardVenc.style.border = totalVencidoFiltrado > 0 ? '2px solid #c0392b' : '1px solid #eee';
                         cardVenc.style.boxShadow = totalVencidoFiltrado > 0 ? '0 4px 12px rgba(192,57,43,0.08)' : '0 1px 3px rgba(0,0,0,0.06)';
                     }
+                    // Atualizar card de total recebido no mês
+                    const elRecebidoMes = document.getElementById('total-recebido-mes');
+                    const labelRecebidoMes = document.getElementById('label-total-recebido-mes');
+                    if (elRecebidoMes && typeof ui.formatarMoeda === 'function') elRecebidoMes.textContent = ui.formatarMoeda(totalRecebidoMes);
+                    if (labelRecebidoMes) labelRecebidoMes.textContent = `Total Recebido no mês: ${mesResumo}${anoResumo ? ' de ' + anoResumo : ''}`;
                 } catch (err) { console.warn('Erro ao recalcular totais filtrados:', err); }
 
                 showToast('Filtro aplicado', 'info');
@@ -5063,6 +5124,7 @@
 
         async function filtrarPagar() {
             try {
+                const dataAtual = new Date();
                 const fornecedorFiltro = (document.getElementById('filter-fornecedor').value || '').trim().toLowerCase();
                 const statusFiltroRaw = (document.getElementById('filter-status-pagar').value || '').trim();
                 const statusFiltro = statusFiltroRaw ? statusFiltroRaw.toLowerCase() : '';
@@ -5247,26 +5309,30 @@
                     };
                     // Nome dos meses em português
                     const meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
-                    const dataAtual = new Date();
-                    const mesAtual = dataAtual.getMonth();
-                    const anoAtual = dataAtual.getFullYear();
-                    // Considera como "a pagar" tudo que não está pago, inclusive status "parcelado", e só do mês corrente
-                    const totalPagarFiltrado = filtrados
-                        .filter(p => {
-                            const st = (p.status || '').toLowerCase();
-                            if (!(st === 'aberto' || st === 'pendente' || st === 'atrasado' || st === 'parcelado')) return false;
-                            // Só do mês e ano corrente
-                            let v = p.vencimento || p.data || p.created_at || p.createdAt || p.criado_em;
-                            if (!v) return false;
-                            const d = new Date(v);
-                            return d.getMonth() === mesAtual && d.getFullYear() === anoAtual;
-                        })
-                        .reduce((sum, p) => sum + (Number(p.valor) || 0), 0);
+                    // Pega mês/ano filtrado, ou atual se não filtrado
+                    const filtroMesVal = (document.getElementById('filter-mes-pagar') && document.getElementById('filter-mes-pagar').value) || '';
+                    const filtroAnoVal = (document.getElementById('filter-ano-pagar') && document.getElementById('filter-ano-pagar').value) || '';
+                    let mesResumo, anoResumo;
+                    if (filtroMesVal) {
+                        mesResumo = meses[Number(filtroMesVal)-1] || '';
+                    } else {
+                        const dataAtual = new Date();
+                        mesResumo = meses[dataAtual.getMonth()];
+                    }
+                    if (filtroAnoVal) {
+                        anoResumo = filtroAnoVal;
+                    } else {
+                        const dataAtual = new Date();
+                        anoResumo = dataAtual.getFullYear();
+                    }
+
+                    // O total a pagar deve ser a soma dos itens exibidos na tabela (filtrados)
+                    const totalPagarFiltrado = filtrados.reduce((sum, p) => sum + (Number(p.valor) || 0), 0);
 
                     // Atualizar label do mês
                     const labelTotalPagar = document.getElementById('label-total-pagar');
                     if (labelTotalPagar) {
-                        labelTotalPagar.textContent = `Total a Pagar: ${meses[mesAtual]}`;
+                        labelTotalPagar.textContent = `Total a Pagar: ${mesResumo}${anoResumo ? ' de ' + anoResumo : ''}`;
                     }
 
                     const hojeZero = new Date(); hojeZero.setHours(0,0,0,0);
@@ -5278,14 +5344,16 @@
                         if (m) return new Date(`${m[3]}-${m[2]}-${m[1]}`);
                         return null;
                     };
+                    // Usar mês/ano filtrado para vencidos
                     const totalPagarVencidoFiltrado = filtrados
                         .filter(p => {
                             // Considera apenas status aberto, pendente, atrasado ou parcelado
                             const st = (p.status || '').toLowerCase();
                             if (!(st === 'aberto' || st === 'pendente' || st === 'atrasado' || st === 'parcelado')) return false;
                             const v = parseDateLocal(p.vencimento || p.data || p.created_at || p.createdAt || p.criado_em);
-                            // Só do mês e ano corrente
-                            if (!v || v.getMonth() !== mesAtual || v.getFullYear() !== anoAtual) return false;
+                            if (!v) return false;
+                            if (filtroMesVal && (v.getMonth()+1) !== Number(filtroMesVal)) return false;
+                            if (filtroAnoVal && v.getFullYear() !== Number(filtroAnoVal)) return false;
                             return v < hojeZero;
                         })
                         .reduce((s, p) => s + (Number(p.valor) || 0), 0);

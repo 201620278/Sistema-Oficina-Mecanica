@@ -214,7 +214,7 @@
                     <i>🔧</i> Ordens de Serviço
                 </li>
                 <li class="nav-item" onclick="openFinanceiro()" style="cursor: pointer;">
-                    <i>💰</i> Financeiro (Nova Aba)
+                    <i>💰</i> Financeiro
                 </li>
                 <li class="nav-item nav-admin-only" data-section="configuracoes" style="display: none;">
                     <i>⚙️</i> Configurações
@@ -1439,6 +1439,101 @@
         }
 
         class NegoCarSystem {
+                                /**
+                                 * Permite simular e registrar o pagamento parcial de uma parcela.
+                                 * @param {number} numeroParcela - Número da parcela (1-indexado)
+                                 * @param {number} valorParcela - Valor total da parcela
+                                 */
+                                async pagarParcelaPreview(numeroParcela, valorParcela) {
+                                    // Encontrar a transação da parcela correspondente
+                                    const parcela = this.dados.transacoes.find(t => t.numeroParcela === numeroParcela && t.status === 'pendente');
+                                    if (!parcela) {
+                                        alert('Parcela não encontrada ou já quitada!');
+                                        return;
+                                    }
+                                    const input = document.getElementById(`input-parcela-pagamento-${numeroParcela}`);
+                                    if (!input) {
+                                        alert('Campo de valor não encontrado!');
+                                        return;
+                                    }
+                                    let valorPago = parseFloat(input.value.replace(',', '.'));
+                                    if (!valorPago || valorPago <= 0) {
+                                        alert('Informe um valor válido para pagamento!');
+                                        return;
+                                    }
+                                    if (valorPago > parcela.valor) {
+                                        alert('O valor pago não pode ser maior que o valor da parcela!');
+                                        return;
+                                    }
+
+                                    // Inicializa histórico de pagamentos se não existir
+                                    if (!Array.isArray(parcela.pagamentos)) {
+                                        parcela.pagamentos = [];
+                                    }
+                                    // Adiciona pagamento ao histórico
+                                    parcela.pagamentos.push({
+                                        valor: valorPago,
+                                        data: new Date().toISOString()
+                                    });
+
+                                    // Atualiza valor pago acumulado
+                                    parcela.valorPago = (parcela.valorPago || 0) + valorPago;
+
+                                    // Atualiza status da parcela
+                                    if (Math.abs(parcela.valorPago - parcela.valor) < 0.01) {
+                                        parcela.status = 'confirmado';
+                                        this.log(`Parcela ${numeroParcela} quitada!`, 'success');
+                                    } else {
+                                        parcela.status = 'parcial';
+                                        this.log(`Pagamento parcial registrado para a parcela ${numeroParcela}.`, 'info');
+                                    }
+
+                                    // Salva alterações
+                                    this.salvarDados('transacoes');
+                                    // Atualiza UI (opcional: recarregar lista de parcelas)
+                                    this.atualizarParcelasUI();
+                                    // Limpa input
+                                    input.value = '';
+                                }
+                                    atualizarParcelasUI() {
+                                        // Re-renderiza a lista de parcelas
+                                        this.atualizarResumoFinanceiro();
+                                    }
+                        async excluirCliente(id) {
+                            try {
+                                // Verificar se existe agendamento atrelado ao cliente
+                                const agendamentos = (this.dados.agendamentos || []).filter(a => a.clienteId === id);
+                                if (agendamentos.length > 0) {
+                                    alert('Não é possível excluir: o cliente possui agendamentos vinculados.');
+                                    return false;
+                                }
+
+                                // Solicitar PIN do usuário
+                                const pin = prompt('Digite o PIN do usuário para confirmar a exclusão:');
+                                if (!pin || pin.length !== 4) {
+                                    alert('PIN inválido. Exclusão cancelada.');
+                                    return false;
+                                }
+                                const usuario = JSON.parse(localStorage.getItem('usuario'));
+                                if (!usuario || usuario.pin !== pin) {
+                                    alert('PIN incorreto. Exclusão cancelada.');
+                                    return false;
+                                }
+
+                                // Excluir cliente no servidor
+                                await this.apiRequest(`/clientes/${id}`, { method: 'DELETE' });
+                                // Remover localmente
+                                this.dados.clientes = this.dados.clientes.filter(c => c.id !== id);
+                                this.salvarDados('clientes');
+                                this.atualizarTodosDados();
+                                this.log('Cliente excluído com sucesso!', 'success');
+                                return true;
+                            } catch (error) {
+                                this.log(`Erro ao excluir cliente: ${error.message}`, 'error');
+                                alert(error.message);
+                                return false;
+                            }
+                        }
             constructor() {
                 this.config = {
                     apiBaseUrl: 'http://localhost:3000/api',
@@ -1676,8 +1771,23 @@
 
             async sincronizarClientesComServidor() {
                 try {
+                    // --- LIMPEZA DE CLIENTES DUPLICADOS POR TELEFONE ---
+                    if (Array.isArray(this.dados.clientes)) {
+                        const vistos = new Map();
+                        this.dados.clientes = this.dados.clientes.filter(cliente => {
+                            const tel = (cliente.telefone || cliente.whatsapp || '').replace(/\D/g, '');
+                            if (!tel) return true;
+                            if (vistos.has(tel)) {
+                                // Mantém apenas o primeiro cliente com esse telefone
+                                return false;
+                            }
+                            vistos.set(tel, true);
+                            return true;
+                        });
+                        this.salvarDados('clientes');
+                    }
+
                     let clientesServidor = await this.apiRequest('/clientes');
-                    
                     // Criar um Set com os IDs dos clientes que já existem no servidor
                     const idsServidor = new Set((clientesServidor || []).map(c => String(c.id)));
 
@@ -1694,7 +1804,6 @@
                                 veiculos: clienteLocal.veiculos,
                                 ativo: clienteLocal.ativo
                             });
-                            
                             try {
                                 if (idsServidor.has(clienteIdStr)) {
                                     // Cliente já existe, atualizar
@@ -1704,22 +1813,18 @@
                                     await this.apiRequest('/clientes', { method: 'POST', data: payload });
                                 }
                             } catch (error) {
-                                // Se der erro de constraint, o cliente já existe, tentar atualizar
                                 if (error.message && error.message.includes('UNIQUE constraint')) {
                                     console.warn(`Cliente ${clienteLocal.id} já existe, tentando atualizar...`);
                                     try {
                                         await this.apiRequest(`/clientes/${clienteLocal.id}`, { method: 'PUT', data: payload });
                                     } catch (updateError) {
                                         console.error(`Erro ao atualizar cliente ${clienteLocal.id}:`, updateError);
-                                        // Continuar com os próximos clientes mesmo se um falhar
                                     }
                                 } else {
                                     console.error(`Erro ao sincronizar cliente ${clienteLocal.id}:`, error);
-                                    // Continuar com os próximos clientes mesmo se um falhar
                                 }
                             }
                         }
-                        
                         // Recarregar lista do servidor após sincronização
                         clientesServidor = await this.apiRequest('/clientes');
                     }
@@ -2446,18 +2551,13 @@
                         await this.apiRequest(`/clientes/${editId}`, { method: 'PUT', data: payload });
                         mensagem = 'Cliente atualizado com sucesso!';
                     } else {
-                        const novoCliente = await this.apiRequest('/clientes', { method: 'POST', data: payload });
-                        // Adicionar o novo cliente retornado pelo servidor à lista local
-                        if (novoCliente && novoCliente.id) {
-                            const clienteNormalizado = this.normalizarCliente(novoCliente);
-                            this.dados.clientes.push(clienteNormalizado);
-                            this.salvarDados('clientes');
-                        }
+                        await this.apiRequest('/clientes', { method: 'POST', data: payload });
                     }
-
-                    // Sincronizar apenas se editando, para novo cliente já foi sincronizado via POST
-                    if (editId) {
-                        await this.sincronizarClientesComServidor();
+                    // Após qualquer operação, recarregar lista do servidor para garantir consistência e evitar duplicidade
+                    const clientesServidor = await this.apiRequest('/clientes');
+                    if (clientesServidor) {
+                        this.dados.clientes = clientesServidor.map(cliente => this.normalizarCliente(cliente));
+                        this.salvarDados('clientes');
                     }
 
                     fecharModalCliente();
@@ -4349,11 +4449,21 @@
                         statusTexto = 'Finalizada';
                     }
 
+                    // Corrigir exibição do número do orçamento
+                    let numeroOrcamento = 'N/A';
+                    if (orcamento) {
+                        if (orcamento.numero) {
+                            numeroOrcamento = orcamento.numero;
+                        } else if (orcamento.id) {
+                            numeroOrcamento = orcamento.id;
+                        }
+                    }
+
                     return `
                         <tr onclick="sistema.visualizarOrdemServico(${os.id}); sistema.selectRow('ordens-servico', ${os.id}, this);" style="cursor: pointer;">
                             <td><input type="checkbox" class="row-checkbox" data-id="${os.id}" onclick="event.stopPropagation(); sistema.toggleRowSelection('ordens-servico', ${os.id})"></td>
                             <td>#${os.numero}</td>
-                            <td>#${orcamento?.numero || 'N/A'}</td>
+                            <td>#${numeroOrcamento}</td>
                             <td>${cliente?.nome || 'N/A'}</td>
                             <td>${veiculo ? `${veiculo.placa} - ${veiculo.marca} ${veiculo.modelo}` : 'N/A'}</td>
                             <td>${new Date(os.dataAbertura).toLocaleDateString('pt-BR')}</td>
@@ -6319,8 +6429,30 @@ Obrigado pela confiança! 🙏`;
                         const dataVenc = new Date(dataPrimeira);
                         dataVenc.setMonth(dataVenc.getMonth() + i);
                         const dataFormatada = dataVenc.toLocaleDateString('pt-BR');
-                        html += `<div style="background: #ffffff; padding: 8px; border-radius: 4px; font-size: 13px; border-left: 3px solid #155724;">
-                            <strong>Parcela ${i + 1}/${numParcelas}</strong> - R$ ${valorParcela.toFixed(2)} - Vencimento: ${dataFormatada}
+                        // Buscar parcela correspondente
+                        const parcela = (typeof sistema !== 'undefined' && sistema.dados && Array.isArray(sistema.dados.transacoes))
+                            ? sistema.dados.transacoes.find(t => t.numeroParcela === (i+1) && t.status !== 'cancelado')
+                            : null;
+                        let historicoPagamentos = '';
+                        if (parcela && Array.isArray(parcela.pagamentos) && parcela.pagamentos.length > 0) {
+                            historicoPagamentos = `<div style='margin-top:4px; font-size:12px; color:#555;'>
+                                <strong>Pagamentos:</strong>
+                                <ul style='margin:2px 0 0 12px; padding:0;'>
+                                    ${parcela.pagamentos.map(p => `<li>R$ ${p.valor.toFixed(2)} em ${new Date(p.data).toLocaleDateString('pt-BR')}</li>`).join('')}
+                                </ul>
+                            </div>`;
+                        }
+                        html += `<div style="background: #ffffff; padding: 8px; border-radius: 4px; font-size: 13px; border-left: 3px solid #155724; display: flex; flex-direction: column; gap: 4px;">
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <div style="flex:1;">
+                                    <strong>Parcela ${i + 1}/${numParcelas}</strong> - R$ ${valorParcela.toFixed(2)} - Vencimento: ${dataFormatada}
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 4px;">
+                                    <input type="number" min="0.01" step="0.01" placeholder="Valor a pagar" style="width: 110px; font-size: 13px; padding: 2px 6px; border-radius: 3px; border: 1px solid #ccc;" id="input-parcela-pagamento-${i+1}" />
+                                    <button type="button" class="btn btn-sm btn-success" style="font-size: 12px; padding: 2px 8px;" onclick="sistema.pagarParcelaPreview(${i+1}, ${valorParcela.toFixed(2)})">Pagar</button>
+                                </div>
+                            </div>
+                            ${historicoPagamentos}
                         </div>`;
                     }
                     parcelasListItems.innerHTML = html;

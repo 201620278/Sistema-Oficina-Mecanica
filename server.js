@@ -103,12 +103,15 @@ function inicializarBanco() {
         db.run(`CREATE TABLE IF NOT EXISTS clientes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nome TEXT NOT NULL,
-            telefone TEXT,
+            telefone TEXT UNIQUE,
             endereco TEXT,
             veiculos TEXT,
             ativo INTEGER DEFAULT 1,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`);
+
+        // Garantir UNIQUE em telefone mesmo em bancos já existentes
+        db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_clientes_telefone ON clientes(telefone)');
 
         // Tabela de agendamentos
         db.run(`CREATE TABLE IF NOT EXISTS agendamentos (
@@ -806,9 +809,20 @@ app.post('/api/clientes', (req, res) => {
         }
     }
     
-    // Se tiver ID customizado, verificar se já existe antes de inserir
-    if (possuiIdCustomizado) {
-        db.get('SELECT id FROM clientes WHERE id = ?', [idCustomizado], (err, row) => {
+    // Impedir duplicidade de telefone
+    db.get('SELECT id FROM clientes WHERE telefone = ?', [cliente.telefone], (err, rowTel) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        if (rowTel && (!possuiIdCustomizado || rowTel.id !== idCustomizado)) {
+            res.status(400).json({ error: 'Já existe um cliente com este telefone.' });
+            return;
+        }
+
+        // Se tiver ID customizado, verificar se já existe antes de inserir
+        if (possuiIdCustomizado) {
+            db.get('SELECT id FROM clientes WHERE id = ?', [idCustomizado], (err, row) => {
             if (err) {
                 res.status(500).json({ error: err.message });
                 return;
@@ -852,26 +866,31 @@ app.post('/api/clientes', (req, res) => {
                 );
             }
         });
-    } else {
-        // Sem ID customizado, inserir normalmente
-        db.run(
-            'INSERT INTO clientes (nome, telefone, endereco, veiculos, ativo) VALUES (?, ?, ?, ?, ?)',
-            [cliente.nome, cliente.telefone, endereco, veiculos, cliente.ativo !== undefined ? cliente.ativo : 1],
-            function(err) {
-                if (err) {
-                    res.status(500).json({ error: err.message });
-                    return;
+        } else {
+            // Sem ID customizado, inserir normalmente
+            db.run(
+                'INSERT INTO clientes (nome, telefone, endereco, veiculos, ativo) VALUES (?, ?, ?, ?, ?)',
+                [cliente.nome, cliente.telefone, endereco, veiculos, cliente.ativo !== undefined ? cliente.ativo : 1],
+                function(err) {
+                    if (err) {
+                        if (err.message && err.message.includes('UNIQUE')) {
+                            res.status(400).json({ error: 'Já existe um cliente com este telefone.' });
+                        } else {
+                            res.status(500).json({ error: err.message });
+                        }
+                        return;
+                    }
+                    const novoId = this.lastID;
+                    res.json({ 
+                        id: novoId, 
+                        ...cliente,
+                        endereco: cliente.endereco || {},
+                        veiculos: normalizedVeiculosArray
+                    });
                 }
-                const novoId = this.lastID;
-                res.json({ 
-                    id: novoId, 
-                    ...cliente,
-                    endereco: cliente.endereco || {},
-                    veiculos: normalizedVeiculosArray
-                });
-            }
-        );
-    }
+            );
+        }
+    });
 });
 
 app.post('/api/agendamentos', (req, res) => {
@@ -2052,18 +2071,48 @@ app.put('/api/ordens-servico/:id', (req, res) => {
 // DELETE endpoints
 app.delete('/api/clientes/:id', (req, res) => {
     const id = parseInt(req.params.id);
-    
-    // Soft delete - marcar como inativo
-    db.run('UPDATE clientes SET ativo = 0 WHERE id = ?', [id], function(err) {
+    // Verificar se há agendamento, orçamento ou ordem de serviço atrelados
+    db.get('SELECT 1 FROM agendamentos WHERE cliente_id = ? LIMIT 1', [id], (err, agendamento) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
         }
-        if (this.changes === 0) {
-            res.status(404).json({ error: 'Cliente não encontrado' });
+        if (agendamento) {
+            res.status(400).json({ error: 'Não é possível excluir: o cliente possui agendamentos vinculados.' });
             return;
         }
-        res.json({ message: 'Cliente removido com sucesso' });
+        db.get('SELECT 1 FROM orcamentos WHERE cliente_id = ? LIMIT 1', [id], (err2, orcamento) => {
+            if (err2) {
+                res.status(500).json({ error: err2.message });
+                return;
+            }
+            if (orcamento) {
+                res.status(400).json({ error: 'Não é possível excluir: o cliente possui orçamentos vinculados.' });
+                return;
+            }
+            db.get('SELECT 1 FROM ordens_servico WHERE cliente_id = ? LIMIT 1', [id], (err3, os) => {
+                if (err3) {
+                    res.status(500).json({ error: err3.message });
+                    return;
+                }
+                if (os) {
+                    res.status(400).json({ error: 'Não é possível excluir: o cliente possui ordens de serviço vinculadas.' });
+                    return;
+                }
+                // Hard delete
+                db.run('DELETE FROM clientes WHERE id = ?', [id], function(err4) {
+                    if (err4) {
+                        res.status(500).json({ error: err4.message });
+                        return;
+                    }
+                    if (this.changes === 0) {
+                        res.status(404).json({ error: 'Cliente não encontrado' });
+                        return;
+                    }
+                    res.json({ message: 'Cliente removido com sucesso' });
+                });
+            });
+        });
     });
 });
 
