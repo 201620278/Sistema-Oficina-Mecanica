@@ -697,6 +697,7 @@
                         <div id="vis-dup-status"></div>
                     </div>
                 </div>
+                <div id="vis-dup-historico-pagamentos" style="margin-top:10px"></div>
             </div>
             <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">
                 <button class="btn btn-secondary" onclick="hideModal('modal-visualizar-duplicata')">Fechar</button>
@@ -2100,9 +2101,8 @@
                 const nome = cliente && cliente.nome ? cliente.nome : (duplicata.cliente || 'Cliente');
                 const telefone = cliente && cliente.telefone ? cliente.telefone : '';
                 const dataPagamento = duplicata.dataPagamento || new Date().toISOString().split('T')[0];
-                const valor = duplicata.valor != null ? Number(duplicata.valor).toFixed(2) : '0.00';
-
-                return `RECIBO DE PAGAMENTO\n\nOficina Mecânica Nego Car\nCliente: ${nome}\nTelefone: ${telefone}\nDescrição: ${duplicata.descricao}\nParcela: ${duplicata.parcela || ''}\nData Pagamento: ${this.formatarDataBR(dataPagamento)}\nValor: R$ ${valor}\n\nObservações: ${duplicata.observacoes || ''}\n\nObrigado pela preferência!`;
+                const valorPago = duplicata.valorPago != null ? Number(duplicata.valorPago).toFixed(2) : (duplicata.valor != null ? Number(duplicata.valor).toFixed(2) : '0.00');
+                return `RECIBO DE PAGAMENTO\n\nOficina Mecânica Nego Car\nCliente: ${nome}\nTelefone: ${telefone}\nDescrição: ${duplicata.descricao}\nParcela: ${duplicata.parcela || ''}\nData Pagamento: ${this.formatarDataBR(dataPagamento)}\nValor Pago: R$ ${valorPago}\n\nObservações: ${duplicata.observacoes || ''}\n\nObrigado pela preferência!`;
             }
 
             // Abre uma janela imprimível com o recibo e um botão para enviar via WhatsApp (app)
@@ -2846,16 +2846,10 @@
                     // Validação: se for parcela, verificar se a parcela anterior foi paga
                     const numeroParcela = duplicata.numeroParcela || duplicata.numero_parcela;
                     if (numeroParcela && numeroParcela > 1) {
-                        // É uma parcela (não é a primeira), verificar parcelas anteriores
                         const todasAsRecebidas = await this.db.getAll('receber');
-                        
-                        // Encontrar a parcela anterior
                         const grupoParcelamentoId = duplicata.grupoParcelamentoId || duplicata.grupo_parcelamento_id;
                         const orcamentoId = duplicata.orcamentoId || duplicata.orcamento_id;
-                        
                         let parcelaAnterior = null;
-                        
-                        // Buscar pela parcela número (numero_parcela - 1) no mesmo grupo
                         if (grupoParcelamentoId) {
                             parcelaAnterior = todasAsRecebidas.find(r => 
                                 (r.numero_parcela === numeroParcela - 1 || r.numeroParcela === numeroParcela - 1) &&
@@ -2867,79 +2861,122 @@
                                 (r.orcamento_id === orcamentoId || r.orcamentoId === orcamentoId)
                             );
                         }
-                        
                         if (parcelaAnterior && (parcelaAnterior.status || '').toLowerCase() !== 'pago') {
                             showToast(`❌ Não é possível liquidar a parcela ${numeroParcela}. A parcela ${numeroParcela - 1} ainda não foi paga!`, 'error');
                             return;
                         }
                     }
 
-                    // Ajuste de status local
-                    duplicata.status = 'pago';
-                    duplicata.dataPagamento = new Date().toISOString().split('T')[0];
-
-                    // Salva local (IndexedDB / localStorage)
-                    await this.db.put('receber', duplicata);
-
-                    // Sincronizar com o servidor somente se este registro já existir no servidor
-                    // (IDs do servidor são numéricos). Para IDs locais, `this.db.put` já
-                    // enfileira a operação para sincronização posterior.
-                    const idServidor = String(duplicata.id).split(':')[0];
-                    const isServerId = /^\d+$/.test(idServidor);
-                    if (isServerId && navigator.onLine) {
-                        try {
-                            const resp = await fetch(`/api/financeiro/${idServidor}`, {
-                                method: 'PUT',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    status: 'pago',
-                                    dataPagamento: duplicata.dataPagamento,
-                                    descricao: duplicata.descricao || '',
-                                    observacoes: duplicata.observacoes || '',
-                                    grupoParcelamentoId: duplicata.grupoParcelamentoId || null
-                                })
-                            });
-
-                            if (!resp.ok) {
-                                const errorData = await resp.json().catch(() => ({}));
-                                console.error('Erro API ao marcar pago', errorData);
-
-                                // Se foi erro 409 (conflito), é a validação de parcelas
-                                if (resp.status === 409 && errorData.details) {
-                                    showToast(`❌ ${errorData.details.mensagem}`, 'error');
-                                    // Reverter o status local
-                                    duplicata.status = 'aberto';
-                                    delete duplicata.dataPagamento;
-                                    await this.db.put('receber', duplicata);
-                                    return;
-                                }
-
-                                showToast('Registro pago localmente, mas falhou ao atualizar no servidor!', 'warning');
-                            }
-                        } catch (err) {
-                            console.warn('Falha na comunicação com servidor ao marcar pago', err);
-                            showToast('Sem conexão com o servidor. Pagamento salvo localmente apenas.', 'warning');
-                        }
-                    } else {
-                        // ID local: já enfileirado por this.db.put; informar usuário claramente
-                        console.log('ID local detectado, operação enfileirada para sincronização posterior:', duplicata.id);
-                        showToast('Pagamento salvo localmente. Será sincronizado quando online.', 'info');
-                    }
-
-                    // Opcional: recibo
-                    try {
-                        const cliente = await this.db.get('clientes', duplicata.clienteId);
-                        this.whatsappManager.abrirReciboImprimivel(cliente, duplicata);
-                    } catch (e) { /* ignore */ }
-
-                    showToast('Duplicata marcada como paga!', 'success');
-                    this.carregarReceber();
-                    this.carregarDadosDashboard();
-
+                    this.abrirModalPagamentoParcial(duplicata);
                 } catch (error) {
                     console.error('Erro ao marcar como pago:', error);
                     showToast('Erro ao marcar como pago', 'error');
                 }
+            }
+
+            abrirModalPagamentoParcial(duplicata) {
+                const old = document.getElementById('modal-pagamento-parcial');
+                if (old) old.remove();
+                const modal = document.createElement('div');
+                modal.id = 'modal-pagamento-parcial';
+                modal.className = 'modal active';
+                modal.innerHTML = `
+                    <div class="modal-content" style="max-width: 350px;">
+                        <div class="modal-header">
+                            <h3>Pagamento Parcial</h3>
+                            <button class="close" onclick="document.getElementById('modal-pagamento-parcial').remove()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <p>Valor da parcela: <strong>R$ ${Number(duplicata.valor).toFixed(2)}</strong></p>
+                            <p>Valor já pago: <strong>R$ ${Number(duplicata.valorPago || 0).toFixed(2)}</strong></p>
+                            <div class="form-group">
+                                <label for="valor-pagamento-parcial">Valor a receber agora</label>
+                                <input type="number" id="valor-pagamento-parcial" min="0.01" step="0.01" max="${Number(duplicata.valor - (duplicata.valorPago || 0)).toFixed(2)}" value="${Number(duplicata.valor - (duplicata.valorPago || 0)).toFixed(2)}" style="width:100%" />
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" onclick="document.getElementById('modal-pagamento-parcial').remove()">Cancelar</button>
+                            <button class="btn btn-success" onclick="ui.confirmarPagamentoParcial('${duplicata.id}')">Confirmar</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+            }
+
+            async confirmarPagamentoParcial(id) {
+                const duplicata = await this.db.get('receber', id);
+                if (!duplicata) return;
+                const input = document.getElementById('valor-pagamento-parcial');
+                if (!input) return;
+                let valorPagamento = Number(input.value.replace(',', '.'));
+                let valorRestante = Number(duplicata.valor) - Number(duplicata.valorPago || 0);
+                if (isNaN(valorPagamento) || valorPagamento <= 0) {
+                    showToast('Valor inválido!', 'warning');
+                    return;
+                }
+                if (valorPagamento > valorRestante) {
+                    showToast('O valor pago não pode ser maior que o saldo da parcela!', 'warning');
+                    return;
+                }
+                if (!Array.isArray(duplicata.historicoPagamentos)) duplicata.historicoPagamentos = [];
+                duplicata.historicoPagamentos.push({
+                    valor: valorPagamento,
+                    data: new Date().toISOString(),
+                });
+                duplicata.valorPago = Number(duplicata.valorPago || 0) + valorPagamento;
+                if (duplicata.valorPago >= Number(duplicata.valor)) {
+                    duplicata.status = 'pago';
+                    duplicata.dataPagamento = new Date().toISOString().split('T')[0];
+                } else {
+                    duplicata.status = 'parcial';
+                    delete duplicata.dataPagamento;
+                }
+                await this.db.put('receber', duplicata);
+                document.getElementById('modal-pagamento-parcial').remove();
+                const idServidor = String(duplicata.id).split(':')[0];
+                const isServerId = /^\d+$/.test(idServidor);
+                if (isServerId && navigator.onLine) {
+                    try {
+                        const resp = await fetch(`/api/financeiro/${idServidor}`, {
+                            method: 'PUT',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                status: duplicata.status,
+                                dataPagamento: duplicata.dataPagamento,
+                                valorPago: duplicata.valorPago,
+                                descricao: duplicata.descricao || '',
+                                observacoes: duplicata.observacoes || '',
+                                grupoParcelamentoId: duplicata.grupoParcelamentoId || null,
+                                historicoPagamentos: duplicata.historicoPagamentos
+                            })
+                        });
+                        if (!resp.ok) {
+                            const errorData = await resp.json().catch(() => ({}));
+                            console.error('Erro API ao marcar pago', errorData);
+                            if (resp.status === 409 && errorData.details) {
+                                showToast(`❌ ${errorData.details.mensagem}`, 'error');
+                                duplicata.status = 'aberto';
+                                delete duplicata.dataPagamento;
+                                await this.db.put('receber', duplicata);
+                                return;
+                            }
+                            showToast('Registro pago localmente, mas falhou ao atualizar no servidor!', 'warning');
+                        }
+                    } catch (err) {
+                        console.warn('Falha na comunicação com servidor ao marcar pago', err);
+                        showToast('Sem conexão com o servidor. Pagamento salvo localmente apenas.', 'warning');
+                    }
+                } else {
+                    console.log('ID local detectado, operação enfileirada para sincronização posterior:', duplicata.id);
+                    showToast('Pagamento salvo localmente. Será sincronizado quando online.', 'info');
+                }
+                try {
+                    const cliente = await this.db.get('clientes', duplicata.clienteId);
+                    this.whatsappManager.abrirReciboImprimivel(cliente, duplicata);
+                } catch (e) { /* ignore */ }
+                showToast(duplicata.status === 'pago' ? 'Duplicata quitada!' : 'Pagamento parcial registrado!', 'success');
+                this.carregarReceber();
+                this.carregarDadosDashboard();
             }
 
             async marcarComoPagoPagar(id) {
@@ -3024,8 +3061,19 @@
                     document.getElementById('vis-dup-descricao').innerText = duplicata.descricao || '';
                     document.getElementById('vis-dup-parcela').innerText = duplicata.parcela || '';
                     document.getElementById('vis-dup-vencimento').innerText = this.formatarData(duplicata.vencimento);
-                    document.getElementById('vis-dup-valor').innerText = this.formatarMoeda(Number(duplicata.valor || 0));
+                    document.getElementById('vis-dup-valor').innerText = this.formatarMoeda(Number(duplicata.valor || 0)) +
+                        (duplicata.valorPago ? `\nPago: R$ ${Number(duplicata.valorPago).toFixed(2)}\nRestante: R$ ${(Number(duplicata.valor) - Number(duplicata.valorPago)).toFixed(2)}` : '');
                     document.getElementById('vis-dup-status').innerHTML = this.criarBadgeStatus(duplicata);
+
+                    // Exibir histórico de pagamentos se houver
+                    const histEl = document.getElementById('vis-dup-historico-pagamentos');
+                    if (histEl) {
+                        if (Array.isArray(duplicata.historicoPagamentos) && duplicata.historicoPagamentos.length > 0) {
+                            histEl.innerHTML = '<strong>Histórico de Pagamentos:</strong><ul style="margin:8px 0 0 0;padding-left:18px">' + duplicata.historicoPagamentos.map(h => `<li>${this.formatarData(h.data)} - R$ ${Number(h.valor).toFixed(2)}</li>`).join('') + '</ul>';
+                        } else {
+                            histEl.innerHTML = '';
+                        }
+                    }
 
                     // preencher mensagem whatsapp no modal de envio (pré-visualização)
                     try {
@@ -3695,8 +3743,11 @@
                     }
                     
                     // GERAR PARCELAS
-                    const parcelas = this.gerarParcelasParaSalvar();
-                    
+                    let parcelas = this.gerarParcelasParaSalvar();
+                    // Adiciona campo valorPago inicial 0 em cada parcela
+                    if (parcelas && parcelas.length > 0) {
+                        parcelas = parcelas.map(p => ({...p, valorPago: 0}));
+                    }
                     if (!parcelas || parcelas.length === 0) {
                         showToast('Nenhuma parcela gerada. Verifique os dados!', 'warning');
                         return;
