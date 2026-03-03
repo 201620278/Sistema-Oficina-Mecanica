@@ -61,6 +61,29 @@ const CLEANUP_MODULES = {
 };
 
 // Middlewares
+// Proxy para ViaCEP para evitar CORS no frontend (Node 18+ já tem fetch nativo)
+app.get('/api/cep/:cep', async (req, res) => {
+    const cep = req.params.cep.replace(/\D/g, '');
+
+    if (cep.length !== 8) {
+        return res.status(400).json({ erro: 'CEP inválido' });
+    }
+
+    try {
+        const response = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+
+        if (!response.ok) {
+            throw new Error(`ViaCEP respondeu ${response.status}`);
+        }
+
+        const data = await response.json();
+        res.json(data);
+
+    } catch (error) {
+        console.error('Erro real ao buscar CEP:', error);
+        res.status(500).json({ erro: 'Falha ao buscar CEP' });
+    }
+});
 app.use(cors());
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
@@ -1482,7 +1505,20 @@ app.post('/api/transacoes', (req, res) => {
     if ((tipoTransacao === 'pagar' || tipoTransacao === 'contas a pagar' || tipoTransacao === 'contas_pagar') && formaPag === 'à vista') {
         status = 'pago';
     }
-    const observacoes = transacao.observacoes || '';
+    // Salvar historicoPagamentos dentro de observacoes (JSON)
+    let observacoes = transacao.observacoes || '';
+    if (transacao.historicoPagamentos) {
+        try {
+            let obsObj = {};
+            if (observacoes && typeof observacoes === 'string') {
+                try { obsObj = JSON.parse(observacoes); } catch(e) { obsObj = {}; }
+            } else if (typeof observacoes === 'object') {
+                obsObj = observacoes;
+            }
+            obsObj.historicoPagamentos = transacao.historicoPagamentos;
+            observacoes = JSON.stringify(obsObj);
+        } catch(e) { /* fallback: salva como string normal */ }
+    }
     const numeroParcela = transacao.numeroParcela ?? transacao.numero_parcela ?? null;
     const totalParcelas = transacao.totalParcelas ?? transacao.total_parcelas ?? null;
     const isDuplicata = (transacao.isDuplicata ?? transacao.is_duplicata) ? 1 : 0;
@@ -2182,7 +2218,20 @@ app.put('/api/transacoes/:id', (req, res) => {
     const valor = transacao.valor || 0;
     const data = transacao.data || new Date().toISOString().split('T')[0];
     const status = transacao.status || 'pendente';
-    const observacoes = transacao.observacoes || '';
+    // Salvar historicoPagamentos dentro de observacoes (JSON)
+    let observacoes = transacao.observacoes || '';
+    if (transacao.historicoPagamentos) {
+        try {
+            let obsObj = {};
+            if (observacoes && typeof observacoes === 'string') {
+                try { obsObj = JSON.parse(observacoes); } catch(e) { obsObj = {}; }
+            } else if (typeof observacoes === 'object') {
+                obsObj = observacoes;
+            }
+            obsObj.historicoPagamentos = transacao.historicoPagamentos;
+            observacoes = JSON.stringify(obsObj);
+        } catch(e) { /* fallback: salva como string normal */ }
+    }
     const numeroParcela = transacao.numeroParcela ?? transacao.numero_parcela ?? null;
     const totalParcelas = transacao.totalParcelas ?? transacao.total_parcelas ?? null;
     const isDuplicata = transacao.isDuplicata ?? transacao.is_duplicata ? 1 : 0;
@@ -2504,6 +2553,15 @@ app.post('/api/cleanup/delete-records', (req, res) => {
 // Helper para normalizar campos de um registro financeiro antes de enviar ao cliente
 function normalizeFinanceiroRow(row) {
     const out = { ...row };
+    // Extrair historicoPagamentos de observacoes (JSON)
+    out.historicoPagamentos = (() => {
+        if (!row.observacoes) return [];
+        try {
+            const obs = typeof row.observacoes === 'string' ? JSON.parse(row.observacoes) : row.observacoes;
+            if (obs && Array.isArray(obs.historicoPagamentos)) return obs.historicoPagamentos;
+        } catch(e) {}
+        return [];
+    })();
     try {
         // Normalizar valor (converter strings formatadas em número)
         if (out.valor !== undefined && out.valor !== null) {

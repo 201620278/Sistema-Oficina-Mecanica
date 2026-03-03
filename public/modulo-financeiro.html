@@ -977,10 +977,22 @@
                             console.log('Dados sincronizados do servidor:', dados);
                             
                             // Separar por tipo
-                            const receber = dados.filter(d => d.tipo === 'receber').map(d => ({
-                                ...d,
-                                id: String(d.id)
-                            }));
+                            const receber = dados.filter(d => d.tipo === 'receber').map(d => {
+                                let hist = [];
+                                if (Array.isArray(d.historicoPagamentos)) {
+                                    hist = d.historicoPagamentos;
+                                } else if (d.observacoes) {
+                                    try {
+                                        const obs = typeof d.observacoes === 'string' ? JSON.parse(d.observacoes) : d.observacoes;
+                                        if (obs && Array.isArray(obs.historicoPagamentos)) hist = obs.historicoPagamentos;
+                                    } catch(e){}
+                                }
+                                return {
+                                    ...d,
+                                    id: String(d.id),
+                                    historicoPagamentos: hist
+                                };
+                            });
                             const pagar = dados.filter(d => d.tipo === 'pagar').map(d => ({
                                 ...d,
                                 id: String(d.id)
@@ -2107,40 +2119,42 @@
 
             // Abre uma janela imprimível com o recibo e um botão para enviar via WhatsApp (app)
             abrirReciboImprimivel(cliente, duplicata) {
-                const reciboHtml = `\
-                    <html>\n\
-                    <head>\n\
-                        <meta charset="utf-8" />\n\
-                        <title>Recibo de Pagamento</title>\n\
-                        <style>\n\
-                            body { font-family: Arial, sans-serif; margin: 20px; color: #222 }\n\
-                            .recibo { max-width: 720px; margin: auto; border: 1px solid #ddd; padding: 20px; }\n\
-                            h2 { margin-top: 0; }\n\
-                            .linha { display: flex; justify-content: space-between; margin: 6px 0; }\n\
-                            .btns { margin-top: 18px; display:flex; gap:10px }\n\
-                            .btn { padding: 8px 12px; border-radius: 4px; border: none; cursor: pointer }\n\
-                            .btn-print { background:#2ecc71; color:white }\n\
-                            .btn-whatsapp { background:#25D366; color:white }\n\
-                        </style>\n\
-                    </head>\n\
-                    <body>\n\
-                        <div class="recibo">\n\
-                            <h2>Recibo de Pagamento</h2>\n\
-                            <div class="linha"><strong>Oficina:</strong><span>Oficina Mecânica Nego Car</span></div>\n\
-                            <div class="linha"><strong>Cliente:</strong><span>${cliente && cliente.nome ? cliente.nome : (duplicata.cliente || '')}</span></div>\n\
-                            <div class="linha"><strong>Telefone:</strong><span>${cliente && cliente.telefone ? cliente.telefone : ''}</span></div>\n\
-                            <div class="linha"><strong>Descrição:</strong><span>${duplicata.descricao || ''}</span></div>\n\
-                            <div class="linha"><strong>Parcela:</strong><span>${duplicata.parcela || ''}</span></div>\n\
-                            <div class="linha"><strong>Data Pagamento:</strong><span>${this.formatarDataBR(duplicata.dataPagamento || new Date().toISOString().split('T')[0])}</span></div>\n\
-                            <div class="linha"><strong>Valor:</strong><span>R$ ${Number(duplicata.valor || 0).toFixed(2)}</span></div>\n\
-                            <div style="margin-top:10px"><strong>Observações:</strong><div>${duplicata.observacoes || ''}</div></div>\n\
-                            <div class="btns">\n\
-                                <button class="btn btn-print" onclick="window.print()">Imprimir / Salvar PDF</button>\n\
-                                <a id="whatsapp-app-link" class="btn btn-whatsapp" href="#">Enviar via WhatsApp (App)</a>\n\
-                            </div>\n\
-                        </div>\n\
-                    </body>\n\
-                    </html>\n\
+                // Valor pago: se houver valorPago, mostrar ele; senão, mostrar valor total
+                const valorPago = duplicata.valorPago != null ? Number(duplicata.valorPago).toFixed(2) : (duplicata.valor != null ? Number(duplicata.valor).toFixed(2) : '0.00');
+                const reciboHtml = `
+                    <html>
+                    <head>
+                        <meta charset="utf-8" />
+                        <title>Recibo de Pagamento</title>
+                        <style>
+                            body { font-family: Arial, sans-serif; margin: 20px; color: #222 }
+                            .recibo { max-width: 720px; margin: auto; border: 1px solid #ddd; padding: 20px; }
+                            h2 { margin-top: 0; }
+                            .linha { display: flex; justify-content: space-between; margin: 6px 0; }
+                            .btns { margin-top: 18px; display:flex; gap:10px }
+                            .btn { padding: 8px 12px; border-radius: 4px; border: none; cursor: pointer }
+                            .btn-print { background:#2ecc71; color:white }
+                            .btn-whatsapp { background:#25D366; color:white }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="recibo">
+                            <h2>Recibo de Pagamento</h2>
+                            <div class="linha"><strong>Oficina:</strong><span>Oficina Mecânica Nego Car</span></div>
+                            <div class="linha"><strong>Cliente:</strong><span>${cliente && cliente.nome ? cliente.nome : (duplicata.cliente || '')}</span></div>
+                            <div class="linha"><strong>Telefone:</strong><span>${cliente && cliente.telefone ? cliente.telefone : ''}</span></div>
+                            <div class="linha"><strong>Descrição:</strong><span>${duplicata.descricao || ''}</span></div>
+                            <div class="linha"><strong>Parcela:</strong><span>${duplicata.parcela || ''}</span></div>
+                            <div class="linha"><strong>Data Pagamento:</strong><span>${this.formatarDataBR(duplicata.dataPagamento || new Date().toISOString().split('T')[0])}</span></div>
+                            <div class="linha"><strong>Valor Pago:</strong><span>R$ ${valorPago}</span></div>
+                            <div style="margin-top:10px"><strong>Observações:</strong><div>${duplicata.observacoes || ''}</div></div>
+                            <div class="btns">
+                                <button class="btn btn-print" onclick="window.print()">Imprimir / Salvar PDF</button>
+                                <a id="whatsapp-app-link" class="btn btn-whatsapp" href="#">Enviar via WhatsApp (App)</a>
+                            </div>
+                        </div>
+                    </body>
+                    </html>
                 `;
 
                 const w = window.open('', '_blank', 'toolbar=0,location=0,menubar=0,width=800,height=700');
@@ -2877,6 +2891,17 @@
             abrirModalPagamentoParcial(duplicata) {
                 const old = document.getElementById('modal-pagamento-parcial');
                 if (old) old.remove();
+                // Calcular valor já pago a partir do histórico
+                let valorPago = Number(duplicata.valorPago || 0);
+                if (duplicata.observacoes) {
+                    try {
+                        const obs = typeof duplicata.observacoes === 'string' ? JSON.parse(duplicata.observacoes) : duplicata.observacoes;
+                        if (obs && Array.isArray(obs.historicoPagamentos)) {
+                            valorPago = obs.historicoPagamentos.reduce((s, h) => s + Number(h.valor || 0), 0);
+                        }
+                    } catch(e){}
+                }
+                const valorRestante = Math.max(0, Number(duplicata.valor) - valorPago);
                 const modal = document.createElement('div');
                 modal.id = 'modal-pagamento-parcial';
                 modal.className = 'modal active';
@@ -2888,10 +2913,11 @@
                         </div>
                         <div class="modal-body">
                             <p>Valor da parcela: <strong>R$ ${Number(duplicata.valor).toFixed(2)}</strong></p>
-                            <p>Valor já pago: <strong>R$ ${Number(duplicata.valorPago || 0).toFixed(2)}</strong></p>
+                            <p>Valor já pago: <strong>R$ ${valorPago.toFixed(2)}</strong></p>
+                            <p>Valor restante: <strong>R$ ${valorRestante.toFixed(2)}</strong></p>
                             <div class="form-group">
                                 <label for="valor-pagamento-parcial">Valor a receber agora</label>
-                                <input type="number" id="valor-pagamento-parcial" min="0.01" step="0.01" max="${Number(duplicata.valor - (duplicata.valorPago || 0)).toFixed(2)}" value="${Number(duplicata.valor - (duplicata.valorPago || 0)).toFixed(2)}" style="width:100%" />
+                                <input type="number" id="valor-pagamento-parcial" min="0.01" step="0.01" max="${valorRestante.toFixed(2)}" value="${valorRestante.toFixed(2)}" style="width:100%" />
                             </div>
                         </div>
                         <div class="modal-footer">
@@ -2904,79 +2930,77 @@
             }
 
             async confirmarPagamentoParcial(id) {
-                const duplicata = await this.db.get('receber', id);
-                if (!duplicata) return;
-                const input = document.getElementById('valor-pagamento-parcial');
-                if (!input) return;
-                let valorPagamento = Number(input.value.replace(',', '.'));
-                let valorRestante = Number(duplicata.valor) - Number(duplicata.valorPago || 0);
-                if (isNaN(valorPagamento) || valorPagamento <= 0) {
-                    showToast('Valor inválido!', 'warning');
-                    return;
-                }
-                if (valorPagamento > valorRestante) {
-                    showToast('O valor pago não pode ser maior que o saldo da parcela!', 'warning');
-                    return;
-                }
-                if (!Array.isArray(duplicata.historicoPagamentos)) duplicata.historicoPagamentos = [];
-                duplicata.historicoPagamentos.push({
-                    valor: valorPagamento,
-                    data: new Date().toISOString(),
-                });
-                duplicata.valorPago = Number(duplicata.valorPago || 0) + valorPagamento;
-                if (duplicata.valorPago >= Number(duplicata.valor)) {
-                    duplicata.status = 'pago';
-                    duplicata.dataPagamento = new Date().toISOString().split('T')[0];
-                } else {
-                    duplicata.status = 'parcial';
-                    delete duplicata.dataPagamento;
-                }
-                await this.db.put('receber', duplicata);
-                document.getElementById('modal-pagamento-parcial').remove();
-                const idServidor = String(duplicata.id).split(':')[0];
-                const isServerId = /^\d+$/.test(idServidor);
-                if (isServerId && navigator.onLine) {
-                    try {
-                        const resp = await fetch(`/api/financeiro/${idServidor}`, {
-                            method: 'PUT',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                status: duplicata.status,
-                                dataPagamento: duplicata.dataPagamento,
-                                valorPago: duplicata.valorPago,
-                                descricao: duplicata.descricao || '',
-                                observacoes: duplicata.observacoes || '',
-                                grupoParcelamentoId: duplicata.grupoParcelamentoId || null,
-                                historicoPagamentos: duplicata.historicoPagamentos
-                            })
-                        });
-                        if (!resp.ok) {
-                            const errorData = await resp.json().catch(() => ({}));
-                            console.error('Erro API ao marcar pago', errorData);
-                            if (resp.status === 409 && errorData.details) {
-                                showToast(`❌ ${errorData.details.mensagem}`, 'error');
-                                duplicata.status = 'aberto';
-                                delete duplicata.dataPagamento;
-                                await this.db.put('receber', duplicata);
-                                return;
-                            }
-                            showToast('Registro pago localmente, mas falhou ao atualizar no servidor!', 'warning');
-                        }
-                    } catch (err) {
-                        console.warn('Falha na comunicação com servidor ao marcar pago', err);
-                        showToast('Sem conexão com o servidor. Pagamento salvo localmente apenas.', 'warning');
-                    }
-                } else {
-                    console.log('ID local detectado, operação enfileirada para sincronização posterior:', duplicata.id);
-                    showToast('Pagamento salvo localmente. Será sincronizado quando online.', 'info');
-                }
                 try {
-                    const cliente = await this.db.get('clientes', duplicata.clienteId);
-                    this.whatsappManager.abrirReciboImprimivel(cliente, duplicata);
-                } catch (e) { /* ignore */ }
-                showToast(duplicata.status === 'pago' ? 'Duplicata quitada!' : 'Pagamento parcial registrado!', 'success');
-                this.carregarReceber();
-                this.carregarDadosDashboard();
+                    const duplicata = await this.db.get('receber', id);
+                    if (!duplicata) return;
+                    const input = document.getElementById('valor-pagamento-parcial');
+                    if (!input) return;
+                    let valorPagamento = Number(input.value.replace(',', '.'));
+                    let valorPago = 0;
+                    // Calcular valor já pago a partir do histórico
+                    let historico = [];
+                    if (duplicata.observacoes) {
+                        try {
+                            let obs = duplicata.observacoes;
+                            if (typeof obs === 'string') {
+                                obs = obs.trim();
+                                // Só faz parse se for um JSON válido
+                                if (obs && obs.startsWith('{') && obs.endsWith('}')) {
+                                    try {
+                                        obs = JSON.parse(obs);
+                                    } catch(e) {
+                                        obs = {};
+                                    }
+                                } else {
+                                    obs = {};
+                                }
+                            }
+                            if (obs && Array.isArray(obs.historicoPagamentos)) historico = obs.historicoPagamentos;
+                        } catch(e){ historico = []; }
+                    }
+                    valorPago = historico.reduce((s, h) => s + Number(h.valor || 0), 0);
+                    const valorRestante = Math.max(0, Number(duplicata.valor) - valorPago);
+                    if (isNaN(valorPagamento) || valorPagamento <= 0) {
+                        showToast('Valor inválido!', 'warning');
+                        return;
+                    }
+                    if (valorPagamento > valorRestante) {
+                        showToast('O valor pago não pode ser maior que o saldo da parcela!', 'warning');
+                        return;
+                    }
+                    // Adicionar ao histórico
+                    historico.push({ valor: valorPagamento, data: new Date().toISOString().split('T')[0] });
+                    // Atualizar observacoes (robusto contra string vazia ou inválida)
+                    let obsObj = {};
+                    if (duplicata.observacoes) {
+                        if (typeof duplicata.observacoes === 'string') {
+                            let obsStr = duplicata.observacoes.trim();
+                            if (obsStr && obsStr.startsWith('{') && obsStr.endsWith('}')) {
+                                try { obsObj = JSON.parse(obsStr); } catch(e) { obsObj = {}; }
+                            }
+                        } else if (typeof duplicata.observacoes === 'object') {
+                            obsObj = duplicata.observacoes;
+                        }
+                    }
+                    duplicata.observacoes = JSON.stringify({ ...obsObj, historicoPagamentos: historico });
+                    // Atualizar valorPago
+                    duplicata.valorPago = historico.reduce((s, h) => s + Number(h.valor || 0), 0);
+                    // Se quitou, marcar como pago
+                    if (duplicata.valorPago >= Number(duplicata.valor)) {
+                        duplicata.status = 'pago';
+                        duplicata.dataPagamento = new Date().toISOString().split('T')[0];
+                    } else {
+                        duplicata.status = 'parcial';
+                    }
+                    await this.db.put('receber', duplicata);
+                    showToast('Pagamento parcial registrado!', 'success');
+                    document.getElementById('modal-pagamento-parcial')?.remove();
+                    this.carregarReceber();
+                    this.carregarDadosDashboard();
+                } catch (e) {
+                    showToast('Erro ao registrar pagamento parcial', 'error');
+                    console.error(e);
+                }
             }
 
             async marcarComoPagoPagar(id) {
@@ -5063,24 +5087,7 @@
                         const s = st.toString().toLowerCase();
                         return s === 'pago' || s === 'paid' || it.pago === true || it.confirmado === 1 || it.confirmado === '1' || it.dataPagamento || it.data_pagamento || it.confirmadoEm || it.confirmado_em || (it.recebido === true || it.recebido === 'true');
                     };
-                    // Total a receber do mês/ano filtrado (independente do status do filtro)
-                    const totalReceberMes = receber
-                        .filter(r => {
-                            if (isPaid(r)) return false;
-                            const d = parseDateLocal(r.vencimento || r.data || r.created_at || r.createdAt || r.criado_em);
-                            if (!d) return false;
-                            if (filtroMesVal && (d.getMonth()+1) !== Number(filtroMesVal)) return false;
-                            if (filtroAnoVal && d.getFullYear() !== Number(filtroAnoVal)) return false;
-                            return true;
-                        })
-                        .reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
-
-                    // Total a receber dos itens filtrados (tabela)
-                    const totalReceberFiltrado = filtrados
-                        .filter(r => !isPaid(r))
-                        .reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
-
-                    const hojeZero = new Date(); hojeZero.setHours(0,0,0,0);
+                    // Função parseDateLocal precisa estar antes do uso
                     const parseDateLocal = (v) => {
                         if (!v) return null;
                         const d = new Date(v);
@@ -5089,13 +5096,6 @@
                         if (m) return new Date(`${m[3]}-${m[2]}-${m[1]}`);
                         return null;
                     };
-                    const totalVencidoFiltrado = filtrados
-                        .filter(r => !isPaid(r))
-                        .filter(r => {
-                            const v = parseDateLocal(r.vencimento || r.data || r.created_at || r.createdAt || r.criado_em);
-                            return v && v < hojeZero;
-                        })
-                        .reduce((s, r) => s + (Number(r.valor) || 0), 0);
 
                     // Novo: total recebido no mês filtrado
                     const meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -5114,6 +5114,33 @@
                         const dataAtual = new Date();
                         anoResumo = dataAtual.getFullYear();
                     }
+
+                    // Total a receber do mês/ano filtrado (independente do status do filtro)
+                    const totalReceberMes = receber
+                        .filter(r => {
+                            if (isPaid(r)) return false;
+                            const d = parseDateLocal(r.vencimento || r.data || r.created_at || r.createdAt || r.criado_em);
+                            if (!d) return false;
+                            if (filtroMesVal && (d.getMonth()+1) !== Number(filtroMesVal)) return false;
+                            if (filtroAnoVal && d.getFullYear() !== Number(filtroAnoVal)) return false;
+                            return true;
+                        })
+                        .reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
+
+                    // Total a receber dos itens filtrados (tabela)
+                    const totalReceberFiltrado = filtrados
+                        .filter(r => !isPaid(r))
+                        .reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
+
+                    const hojeZero = new Date(); hojeZero.setHours(0,0,0,0);
+                    const totalVencidoFiltrado = filtrados
+                        .filter(r => !isPaid(r))
+                        .filter(r => {
+                            const v = parseDateLocal(r.vencimento || r.data || r.created_at || r.createdAt || r.criado_em);
+                            return v && v < hojeZero;
+                        })
+                        .reduce((s, r) => s + (Number(r.valor) || 0), 0);
+
                     // Soma dos recebidos no mês/ano filtrado
                     const totalRecebidoMes = receber
                         .filter(r => isPaid(r))
