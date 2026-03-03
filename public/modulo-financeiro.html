@@ -522,7 +522,10 @@
                             </div>
                             <div class="info-row">
                                 <span class="info-label">Telefone:</span>
-                                <span class="info-value" id="info-cliente-telefone"></span>
+                                    <span class="info-value" id="info-cliente-telefone"></span>
+                                    <button type="button" class="btn btn-whatsapp" style="margin-left:8px;padding:4px 10px;font-size:14px;vertical-align:middle;" onclick="agendarViaWhatsApp()">
+                                        <i class="fab fa-whatsapp"></i> Agendar
+                                    </button>
                             </div>
                             <div class="info-row">
                                 <span class="info-label">Veículo:</span>
@@ -4630,6 +4633,30 @@
         }
 
         function abrirWhatsApp() {
+            // Função para agendar via WhatsApp (botão Agendar)
+            function agendarViaWhatsApp() {
+                // Tenta obter nome e telefone do cliente exibido
+                let nome = '';
+                let telefone = '';
+                try {
+                    nome = document.getElementById('info-cliente-nome').textContent.trim();
+                    telefone = document.getElementById('info-cliente-telefone').textContent.trim();
+                } catch (e) {}
+
+                // Mensagem padrão de agendamento (personalize conforme necessário)
+                let mensagem = `Olá${nome ? ' ' + nome : ''}, tudo bem? Gostaria de agendar um horário para você em nossa oficina. Por favor, responda esta mensagem para confirmarmos o melhor horário!`;
+
+                // Preenche o campo da mensagem do modal WhatsApp
+                document.getElementById('mensagem-whatsapp').value = mensagem;
+
+                // Salva telefone limpo para uso no abrirWhatsApp
+                if (window.ui && nome) {
+                    if (!window.ui.clienteAtual) window.ui.clienteAtual = {};
+                    window.ui.clienteAtual._telefoneParaWhats = telefone;
+                }
+
+                showModal('modal-whatsapp');
+            }
             const mensagem = document.getElementById('mensagem-whatsapp').value;
             // tentar obter telefone limpo (prioriza campo _telefoneParaWhats, gerado ao abrir modal)
             let telefone = '';
