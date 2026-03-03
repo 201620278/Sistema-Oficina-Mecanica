@@ -5,8 +5,8 @@
     <div id="login-screen" class="login-container">
         <div class="login-box">
             <div class="login-logo">
-                <img id="login-logo-preview" src="" alt="Logo" style="display: none;">
-                <div class="login-title" id="login-title">Nego Car</div>
+                <img id="login-logo-preview" src="imagem/logo.png" alt="Logo.png" style="display: block; width: 170px; height: 170px; object-fit: contain; margin: 0 auto 10px auto;">
+                <div class="login-title" id="login-title">CDDriver</div>
             </div>
             <div id="login-form">
                 <h3>Login</h3>
@@ -179,9 +179,10 @@
         <!-- Sidebar -->
         <div class="sidebar">
             <div class="logo">
-                <img id="sidebar-logo" src="" alt="Logo" style="display: none;">
+                <img id="sidebar-logo" src="imagem/logo.png" alt="Logo" style="display: block; width: 120px; height: 120px; object-fit: contain; margin-bottom: 12px;">
                 <div style="display: flex; flex-direction: column;">
-                    <span>NegoCar</span>
+                    <span>CDDriver</span>
+                    <span style="font-size: 12px; line-height: 1.1;">Gestão Inteligente</span>
                     <span id="admin-mode-badge" style="display: none; font-size: 11px; color: #ffeb3b; background: #ff6f00; padding: 3px 8px; border-radius: 3px; margin-top: 5px; text-align: center; font-weight: bold;">🔐 Modo Administrador</span>
                 </div>
             </div>
@@ -221,7 +222,7 @@
             <!-- Header -->
             <div class="header">
                 <div class="header-logo">
-                    <img id="header-logo" src="" alt="Logo" style="display: none;">
+                    <img id="header-logo" src="imagem/logo.png" alt="Logo" style="display: block; width: 60px; height: 60px; object-fit: contain; margin-right: 12px;">
                     <div>
                         <h1 id="section-title">Dashboard</h1>
                         <p id="section-description">Visão geral do sistema NegoCar</p>
@@ -2254,11 +2255,8 @@
                     document.getElementById('login-form').style.display = 'none';
                 } else {
                     // Usuário já cadastrado - mostrar login
-                    const usuarioData = JSON.parse(usuario);
-                    if (usuarioData.logo) {
-                        document.getElementById('login-logo-preview').src = usuarioData.logo;
-                        document.getElementById('login-logo-preview').style.display = 'block';
-                    }
+                    document.getElementById('login-logo-preview').src = 'imagem/logo.png';
+                    document.getElementById('login-logo-preview').style.display = 'block';
                     document.getElementById('login-form').style.display = 'block';
                     document.getElementById('cadastro-form').style.display = 'none';
                 }
@@ -2353,14 +2351,11 @@
             }
 
             carregarLogos() {
-                const usuario = JSON.parse(localStorage.getItem('usuario'));
-                if (usuario && usuario.logo) {
-                    document.getElementById('sidebar-logo').src = usuario.logo;
-                    document.getElementById('sidebar-logo').style.display = 'block';
-                    document.getElementById('header-logo').src = usuario.logo;
-                    document.getElementById('header-logo').style.display = 'block';
-                    document.getElementById('login-logo-preview').src = usuario.logo;
-                }
+                document.getElementById('sidebar-logo').src = 'imagem/logo.png';
+                document.getElementById('sidebar-logo').style.display = 'block';
+                document.getElementById('header-logo').src = 'imagem/logo.png';
+                document.getElementById('header-logo').style.display = 'block';
+                document.getElementById('login-logo-preview').src = 'imagem/logo.png';
             }
 
             entrarNoSistema() {

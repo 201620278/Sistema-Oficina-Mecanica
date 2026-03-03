@@ -108,20 +108,6 @@
                         <!-- Carregado via JS -->
                     </div>
                 </div>
-                
-                <div class="recent-container">
-                    <h3>Últimos Recebimentos</h3>
-                    <div class="recent-list" id="ultimos-recebimentos">
-                        <!-- Carregado via JS -->
-                    </div>
-                </div>
-                
-                <div class="recent-container">
-                    <h3>Últimos Pagamentos</h3>
-                    <div class="recent-list" id="ultimos-pagamentos">
-                        <!-- Carregado via JS -->
-                    </div>
-                </div>
             </div>
         </div>
 
@@ -2372,114 +2358,30 @@
                 const vencimentos = await this.db.getVencimentosHoje();
                 this.atualizarVencimentosHoje(vencimentos);
                 
-                // Carregar últimos recebimentos
-                const ultimosRecebimentos = await this.db.getUltimosRecebimentos();
-                this.atualizarUltimosRecebimentos(ultimosRecebimentos);
-                
-                // Carregar últimos pagamentos
-                const ultimosPagamentos = await this.db.getUltimosPagamentos();
-                this.atualizarUltimosPagamentos(ultimosPagamentos);
+                // ...existing code...
             }
 
-            atualizarVencimentosHoje(vencimentos) {
-                const container = document.getElementById('vencimentos-hoje');
-                let html = '';
-                
-                vencimentos.receber.forEach(item => {
-                    html += `
-                        <div class="vencimento-item">
-                            <div class="vencimento-info">
-                                <h4><span class="badge badge-warning">A Receber</span> ${item.cliente}</h4>
-                                <span>${item.descricao}</span>
-                            </div>
-                            <div class="vencimento-valor">
-                                R$ ${item.valor.toFixed(2)}
-                            </div>
-                        </div>
-                    `;
-                });
-                
-                vencimentos.pagar.forEach(item => {
-                    html += `
-                        <div class="vencimento-item">
-                            <div class="vencimento-info">
-                                <h4><span class="badge badge-danger">A Pagar</span> ${item.fornecedor}</h4>
-                                <span>${item.descricao}</span>
-                            </div>
-                            <div class="vencimento-valor">
-                                R$ ${item.valor.toFixed(2)}
-                            </div>
-                        </div>
-                    `;
-                });
-                
-                if (!html) {
-                    html = '<div class="text-center">Nenhum vencimento para hoje</div>';
-                }
-                
-                container.innerHTML = html;
-            }
-
-            atualizarGraficoInadimplencia(atrasados, emDia) {
-                const ctx = document.getElementById('inadimplencia-chart');
-                if (!ctx) return;
-                
-                // Se o gráfico já existe, atualizar
-                if (this._inadimplenciaChart) {
-                    this._inadimplenciaChart.data.datasets[0].data = [atrasados, emDia];
-                    this._inadimplenciaChart.update();
-                    return;
-                }
-
-                // Criar novo gráfico de pizza
-                this._inadimplenciaChart = new Chart(ctx.getContext('2d'), {
-                    type: 'doughnut',
-                    data: {
-                        labels: ['Atrasado', 'Em Dia'],
-                        datasets: [{
-                            data: [atrasados, emDia],
-                            backgroundColor: [
-                                'rgba(231, 76, 60, 0.8)',
-                                'rgba(39, 174, 96, 0.8)'
-                            ],
-                            borderColor: [
-                                'rgba(231, 76, 60, 1)',
-                                'rgba(39, 174, 96, 1)'
-                            ],
-                            borderWidth: 2
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: true,
-                        animation: false,
-                        plugins: {
-                            legend: { position: 'bottom' },
-                            tooltip: {
-                                callbacks: {
-                                    label: function(context) {
-                                        const label = context.label || '';
-                                        const value = context.parsed || 0;
-                                        const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                                        const percent = ((value / total) * 100).toFixed(0);
-                                        return `${label}: ${value} (${percent}%)`;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                });
-            }
+            // ...existing code...
 
             atualizarUltimosRecebimentos(recebimentos) {
                 const container = document.getElementById('ultimos-recebimentos');
                 let html = '';
-                
+                // Buscar todos os clientes do localStorage
+                const clientes = this.getAllSync('clientes');
                 recebimentos.forEach(item => {
+                    let nomeCliente = '';
+                    // Tenta encontrar o cliente pelo id
+                    if (item.clienteId || item.cliente_id || item.cliente) {
+                        const id = item.clienteId || item.cliente_id || item.cliente;
+                        const clienteObj = clientes.find(c => String(c.id) === String(id));
+                        nomeCliente = clienteObj ? clienteObj.nome : 'Cliente não encontrado';
+                    } else {
+                        nomeCliente = 'Cliente não informado';
+                    }
                     html += `
                         <div class="recent-item">
                             <div class="recent-info">
-                                <h4>${item.cliente}</h4>
+                                <h4>${nomeCliente}</h4>
                                 <span>${this.formatarData(item.dataPagamento)}</span>
                             </div>
                             <div class="recent-valor">
@@ -2488,11 +2390,9 @@
                         </div>
                     `;
                 });
-                
                 if (!html) {
                     html = '<div class="text-center">Nenhum recebimento recente</div>';
                 }
-                
                 container.innerHTML = html;
             }
 
@@ -3692,7 +3592,8 @@
                             parcela: 'Entrada',
                             tipo: 'entrada',
                             parcelado: true,
-                            observacoes: observacoes || ''
+                            observacoes: observacoes || '',
+                            valorPago: Number(valorEntrada.toFixed(2))
                         });
                     }
                     
