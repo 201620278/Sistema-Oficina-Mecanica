@@ -13,10 +13,10 @@
                 <div class="form-group">
                     <label>PIN (4 dígitos) *</label>
                     <div class="pin-input">
-                        <input type="password" id="login-pin-1" maxlength="1" pattern="[0-9]" onkeyup="moverPinInput(1, event)">
-                        <input type="password" id="login-pin-2" maxlength="1" pattern="[0-9]" onkeyup="moverPinInput(2, event)">
-                        <input type="password" id="login-pin-3" maxlength="1" pattern="[0-9]" onkeyup="moverPinInput(3, event)">
-                        <input type="password" id="login-pin-4" maxlength="1" pattern="[0-9]" onkeyup="moverPinInput(4, event)">
+                        <input type="password" id="login-pin-1" maxlength="1" pattern="[0-9]" onkeyup="window.moverPinInput(1, event)">
+                        <input type="password" id="login-pin-2" maxlength="1" pattern="[0-9]" onkeyup="window.moverPinInput(2, event)">
+                        <input type="password" id="login-pin-3" maxlength="1" pattern="[0-9]" onkeyup="window.moverPinInput(3, event)">
+                        <input type="password" id="login-pin-4" maxlength="1" pattern="[0-9]" onkeyup="window.moverPinInput(4, event)">
                     </div>
                 </div>
                 <button type="button" class="btn btn-primary" onclick="sistema.fazerLogin()" style="width: 100%; margin-top: 20px;">
@@ -843,9 +843,14 @@
             <form id="form-veiculo">
                 <div class="form-group">
                     <label>Cliente *</label>
-                    <select id="veiculo-cliente" required>
+                    <div style="position: relative;">
+                        <input type="text" id="veiculo-cliente-search" placeholder="Digite o nome ou telefone do cliente..." style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;" oninput="sistema.filtrarClientesVeiculo(this.value)">
+                        <div id="veiculo-cliente-lista" style="position: absolute; top: 100%; left: 0; right: 0; background: white; border: 1px solid #ccc; border-top: none; max-height: 250px; overflow-y: auto; z-index: 1000; border-radius: 0 0 4px 4px; display: none;"></div>
+                    </div>
+                    <select id="veiculo-cliente" required style="display: none;">
                         <option value="">Selecione o proprietário</option>
                     </select>
+                    <div id="veiculo-cliente-selecionado-badge" style="margin-top: 8px; display: none;"></div>
                 </div>
                 
                 <div class="form-row">
@@ -6441,18 +6446,34 @@ Obrigado pela confiança! 🙏`;
                                 </ul>
                             </div>`;
                         }
-                        html += `<div style="background: #ffffff; padding: 8px; border-radius: 4px; font-size: 13px; border-left: 3px solid #155724; display: flex; flex-direction: column; gap: 4px;">
-                            <div style="display: flex; align-items: center; gap: 10px;">
-                                <div style="flex:1;">
-                                    <strong>Parcela ${i + 1}/${numParcelas}</strong> - R$ ${valorParcela.toFixed(2)} - Vencimento: ${dataFormatada}
+                        // Se for a entrada (primeira parcela), mostrar como quitada e campo zerado
+                        if (i === 0 && document.getElementById('transacao-entrada')?.checked) {
+                            html += `<div style="background: #e6ffe6; padding: 8px; border-radius: 4px; font-size: 13px; border-left: 3px solid #28a745; display: flex; flex-direction: column; gap: 4px; opacity: 0.7;">
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <div style="flex:1;">
+                                        <strong>Entrada quitada</strong> - R$ ${valorEntrada.toFixed(2)}
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 4px;">
+                                        <input type="number" value="" placeholder="Quitada" disabled style="width: 110px; font-size: 13px; padding: 2px 6px; border-radius: 3px; border: 1px solid #ccc; background: #f3f3f3; color: #888;" />
+                                        <button type="button" class="btn btn-sm btn-success" style="font-size: 12px; padding: 2px 8px; opacity:0.5; pointer-events:none;">Pago</button>
+                                    </div>
                                 </div>
-                                <div style="display: flex; align-items: center; gap: 4px;">
-                                    <input type="number" min="0.01" step="0.01" placeholder="Valor a pagar" style="width: 110px; font-size: 13px; padding: 2px 6px; border-radius: 3px; border: 1px solid #ccc;" id="input-parcela-pagamento-${i+1}" />
-                                    <button type="button" class="btn btn-sm btn-success" style="font-size: 12px; padding: 2px 8px;" onclick="sistema.pagarParcelaPreview(${i+1}, ${valorParcela.toFixed(2)})">Pagar</button>
+                                <div style='font-size:12px; color:#28a745;'><strong>Valor de entrada já pago</strong></div>
+                            </div>`;
+                        } else {
+                            html += `<div style="background: #ffffff; padding: 8px; border-radius: 4px; font-size: 13px; border-left: 3px solid #155724; display: flex; flex-direction: column; gap: 4px;">
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <div style="flex:1;">
+                                        <strong>Parcela ${i + 1}/${numParcelas}</strong> - R$ ${valorParcela.toFixed(2)} - Vencimento: ${dataFormatada}
+                                    </div>
+                                    <div style="display: flex; align-items: center; gap: 4px;">
+                                        <input type="number" min="0.01" step="0.01" placeholder="Valor a pagar" style="width: 110px; font-size: 13px; padding: 2px 6px; border-radius: 3px; border: 1px solid #ccc;" id="input-parcela-pagamento-${i+1}" />
+                                        <button type="button" class="btn btn-sm btn-success" style="font-size: 12px; padding: 2px 8px;" onclick="sistema.pagarParcelaPreview(${i+1}, ${valorParcela.toFixed(2)})">Pagar</button>
+                                    </div>
                                 </div>
-                            </div>
-                            ${historicoPagamentos}
-                        </div>`;
+                                ${historicoPagamentos}
+                            </div>`;
+                        }
                     }
                     parcelasListItems.innerHTML = html;
                     parcelasListDiv.style.display = 'block';
@@ -8680,6 +8701,62 @@ Obrigado pela confiança! 🙏`;
             }
 
             // Funções de busca/filtro
+                        filtrarClientesVeiculo(termo) {
+                            const lista = document.getElementById('veiculo-cliente-lista');
+                            const searchInput = document.getElementById('veiculo-cliente-search');
+                            if (!termo || termo.trim().length < 1) {
+                                lista.style.display = 'none';
+                                return;
+                            }
+                            const termoLower = termo.toLowerCase();
+                            const clientesFiltrados = this.dados.clientes.filter(c => 
+                                (c.nome && c.nome.toLowerCase().includes(termoLower)) ||
+                                (c.telefone && c.telefone.includes(termo))
+                            ).slice(0, 15);
+                            if (clientesFiltrados.length === 0) {
+                                lista.innerHTML = '<div style="padding: 10px; color: #999;">Nenhum cliente encontrado</div>';
+                                lista.style.display = 'block';
+                                return;
+                            }
+                            lista.innerHTML = clientesFiltrados.map(cliente => `
+                                <div style="padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; transition: background-color 0.2s;"
+                                     onmouseover="this.style.backgroundColor = '#f5f5f5';"
+                                     onmouseout="this.style.backgroundColor = 'transparent';"
+                                     onclick="sistema.selecionarClienteVeiculo(${cliente.id}, &quot;${cliente.nome.replace(/"/g, '&quot;').replace(/'/g, '\&#39;')}&quot;, &quot;${(cliente.telefone || '').replace(/"/g, '&quot;').replace(/'/g, '\&#39;')}&quot;)">
+                                    <div style="font-weight: bold;">${cliente.nome}</div>
+                                    <div style="font-size: 12px; color: #666;">
+                                        ${cliente.telefone ? '📱 ' + cliente.telefone : ''}
+                                        ${cliente.email ? '📧 ' + cliente.email : ''}
+                                    </div>
+                                </div>
+                            `).join('');
+                            lista.style.display = 'block';
+                        }
+
+                        selecionarClienteVeiculo(clienteId, clienteNome, clienteTelefone) {
+                            document.getElementById('veiculo-cliente').value = clienteId;
+                            const searchInput = document.getElementById('veiculo-cliente-search');
+                            searchInput.value = '';
+                            searchInput.disabled = true;
+                            searchInput.style.opacity = '0.6';
+                            searchInput.style.cursor = 'not-allowed';
+                            searchInput.placeholder = 'Cliente selecionado - clique o X para mudar';
+                            const badge = document.getElementById('veiculo-cliente-selecionado-badge');
+                            badge.innerHTML = `<span style="background: #007bff; color: white; padding: 6px 12px; border-radius: 20px; font-size: 14px;">${clienteNome}<button type="button" style="background: none; border: none; color: white; cursor: pointer; margin-left: 8px; font-weight: bold;" onclick="sistema.limparClienteSelecionadoVeiculo()">×</button></span>`;
+                            badge.style.display = 'block';
+                            document.getElementById('veiculo-cliente-lista').style.display = 'none';
+                        }
+
+                        limparClienteSelecionadoVeiculo() {
+                            const searchInput = document.getElementById('veiculo-cliente-search');
+                            document.getElementById('veiculo-cliente').value = '';
+                            searchInput.value = '';
+                            searchInput.disabled = false;
+                            searchInput.style.opacity = '1';
+                            searchInput.style.cursor = 'text';
+                            searchInput.placeholder = 'Digite o nome ou telefone do cliente...';
+                            document.getElementById('veiculo-cliente-selecionado-badge').style.display = 'none';
+                        }
             filtrarClientes(termo) {
                 const tbody = document.getElementById('clientes-table');
                 if (!tbody) return;
@@ -9177,7 +9254,7 @@ Obrigado pela confiança! 🙏`;
         }
 
         // Função para mover entre campos de PIN
-        function moverPinInput(pos, event, tipo = 'login') {
+        window.moverPinInput = function(pos, event, tipo = 'login') {
             const input = event.target;
             let value = input.value;
             
