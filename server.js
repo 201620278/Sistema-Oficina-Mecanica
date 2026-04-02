@@ -404,6 +404,121 @@ function normalizeTransacao(row) {
     return normalized;
 }
 
+function purgeDeletedFinanceiroFromStorage(deletedId, callback = () => {}) {
+  db.all('SELECT chave, valor FROM storage', [], (err, rows) => {
+    if (err) {
+      console.error('Erro ao ler storage para limpeza:', err.message);
+      return callback();
+    }
+
+    if (!rows || rows.length === 0) {
+      return callback();
+    }
+
+    const keysPreferenciais = new Set([
+      'receber',
+      'financeiro',
+      'transacoes',
+      'contasReceber',
+      'contas_a_receber',
+      'syncQueue',
+      'filaSync',
+      'financeiro_receber'
+    ]);
+
+    let pendentes = 0;
+    let houveAtualizacao = false;
+
+    const finalizar = () => {
+      if (pendentes <= 0) callback();
+    };
+
+    const idsIguais = (a, b) => String(a ?? '') === String(b ?? '');
+
+    const filtrarRecursivo = (valor) => {
+      if (Array.isArray(valor)) {
+        return valor
+          .filter(item => {
+            if (!item || typeof item !== 'object') return true;
+
+            const itemId =
+              item.id ??
+              item.itemId ??
+              item.registroId ??
+              item.financeiroId ??
+              item.transacaoId;
+
+            return !idsIguais(itemId, deletedId);
+          })
+          .map(filtrarRecursivo);
+      }
+
+      if (valor && typeof valor === 'object') {
+        const novo = { ...valor };
+
+        for (const chave of Object.keys(novo)) {
+          novo[chave] = filtrarRecursivo(novo[chave]);
+        }
+
+        return novo;
+      }
+
+      return valor;
+    };
+
+    rows.forEach((row) => {
+      if (!row || typeof row.valor !== 'string') return;
+
+      const deveTentar =
+        keysPreferenciais.has(row.chave) ||
+        row.valor.includes(`"id":${Number(deletedId)}`) ||
+        row.valor.includes(`"id":"${String(deletedId)}"`);
+
+      if (!deveTentar) return;
+
+      let original;
+      try {
+        original = JSON.parse(row.valor);
+      } catch {
+        return;
+      }
+
+      const filtrado = filtrarRecursivo(original);
+      const originalStr = JSON.stringify(original);
+      const filtradoStr = JSON.stringify(filtrado);
+
+      if (originalStr === filtradoStr) return;
+
+      houveAtualizacao = true;
+      pendentes++;
+
+      db.run(
+        `INSERT INTO storage (chave, valor) VALUES (?, ?)
+         ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor`,
+        [row.chave, filtradoStr],
+        (updateErr) => {
+          if (updateErr) {
+            console.error(`Erro ao atualizar storage (${row.chave}):`, updateErr.message);
+          } else {
+            console.log(`Storage limpo para a chave: ${row.chave} | id removido: ${deletedId}`);
+          }
+
+          pendentes--;
+          finalizar();
+        }
+      );
+    });
+
+    if (!houveAtualizacao) {
+      return callback();
+    }
+
+    if (pendentes === 0) {
+      return callback();
+    }
+  });
+}
+
 // ========== DETECÇÃO DO WHATSAPP ==========
 // Função para verificar se WhatsApp está instalado no sistema
 function whatsappEstaInstalado() {
@@ -665,43 +780,49 @@ app.get('/api/financeiro', (req, res) => {
 
 // Deletar lançamento financeiro por ID (contas a receber: exige senha admin ou sessão admin)
 app.delete('/api/financeiro/:id', (req, res) => {
-    const { id } = req.params;
+  const { id } = req.params;
 
-    if (!id) {
-        return res.status(400).json({ error: 'ID inválido' });
+  if (!id) {
+    return res.status(400).json({ error: 'ID inválido' });
+  }
+
+  db.get('SELECT * FROM transacoes WHERE id = ?', [id], (getErr, row) => {
+    if (getErr) {
+      console.error('Erro ao buscar lançamento:', getErr.message);
+      return res.status(500).json({ error: getErr.message });
     }
 
-    db.get('SELECT * FROM transacoes WHERE id = ?', [id], (getErr, row) => {
-        if (getErr) {
-            console.error('Erro ao buscar lançamento:', getErr.message);
-            return res.status(500).json({ error: getErr.message });
-        }
-        if (!row) {
-            return res.status(404).json({ error: 'Registro não encontrado' });
-        }
+    if (!row) {
+      return res.status(404).json({ error: 'Registro não encontrado' });
+    }
 
-        const tipoRow = (row.tipo || '').toLowerCase();
-        if (tipoRow === 'receber' && !verifyAdminPasswordOrCookie(req)) {
-            return res.status(403).json({ error: 'É necessária a senha do administrador para excluir contas a receber.' });
-        }
+    const tipoRow = (row.tipo || '').toLowerCase();
 
-        db.run('DELETE FROM transacoes WHERE id = ?', [id], function(err) {
-            if (err) {
-                console.error('Erro ao deletar lançamento:', err.message);
-                return res.status(500).json({ error: err.message });
-            }
+    if (tipoRow === 'receber' && !verifyAdminPasswordOrCookie(req)) {
+      return res.status(403).json({
+        error: 'É necessária a senha do administrador para excluir contas a receber.'
+      });
+    }
 
-            if (this.changes === 0) {
-                return res.status(404).json({ error: 'Registro não encontrado' });
-            }
+    db.run('DELETE FROM transacoes WHERE id = ?', [id], function (err) {
+      if (err) {
+        console.error('Erro ao deletar lançamento:', err.message);
+        return res.status(500).json({ error: err.message });
+      }
 
-            res.json({
-                success: true,
-                message: 'Lançamento deletado com sucesso',
-                deletedId: String(id)
-            });
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Registro não encontrado' });
+      }
+
+      purgeDeletedFinanceiroFromStorage(id, () => {
+        return res.json({
+          success: true,
+          message: 'Lançamento deletado com sucesso',
+          deletedId: String(id)
         });
+      });
     });
+  });
 });
 
 app.get('/api/usuarios', (req, res) => {
@@ -893,8 +1014,8 @@ app.post('/api/financeiro/cleanup', (req, res) => {
 
 // Admin login endpoints (master login)
 // Credenciais pré-configuradas do administrador do sistema
-const ADMIN_USERNAME = 'Cicero Diego';
-const ADMIN_PASSWORD_HARDCODED = 'Pdb100623@';
+const ADMIN_USERNAME = 'Nego Car';
+const ADMIN_PASSWORD_HARDCODED = 'N2019@'
 
 app.post('/api/admin/login', express.json(), (req, res) => {
     const { username, password } = req.body || {};
