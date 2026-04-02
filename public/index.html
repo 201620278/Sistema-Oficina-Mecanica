@@ -1,12 +1,47 @@
     <link rel="stylesheet" href="/css/styles.css">
 </head>
 <body style="background: #000;">
+    <script>
+        window.openWindowMaximized = function (url) {
+            try {
+                var sw = window.screen.availWidth;
+                var sh = window.screen.availHeight;
+                // Não use noopener nas features: no Chromium isso faz window.open retornar null mesmo com a janela aberta.
+                var w = window.open(url, '_blank', 'width=' + sw + ',height=' + sh + ',left=0,top=0');
+                if (w) return w;
+            } catch (e) { /* continua fallback */ }
+            try {
+                var a = document.createElement('a');
+                a.href = url;
+                a.target = '_blank';
+                a.rel = 'noopener noreferrer';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                return true;
+            } catch (e2) {
+                return null;
+            }
+        };
+        (function maximizeMainView() {
+            function run() {
+                try {
+                    if (window.screen && typeof window.resizeTo === 'function') {
+                        window.resizeTo(window.screen.availWidth, window.screen.availHeight);
+                        window.moveTo(0, 0);
+                    }
+                } catch (e) {}
+            }
+            run();
+            window.addEventListener('load', run);
+        })();
+    </script>
     <!-- Login Screen -->
     <div id="login-screen" class="login-container">
         <div class="login-box">
             <div class="login-logo">
                 <img id="login-logo-preview" src="imagem/logo.png" alt="Logo.png" style="display: block; width: 170px; height: 170px; object-fit: contain; margin: 0 auto 10px auto;">
-                <div class="login-title" id="login-title">CDDriver</div>
+                <div class="login-title" id="login-title">Oficina NegoCar</div>
             </div>
             <div id="login-form">
                 <h3>Login</h3>
@@ -181,8 +216,8 @@
             <div class="logo">
                 <img id="sidebar-logo" src="imagem/logo.png" alt="Logo" style="display: block; width: 120px; height: 120px; object-fit: contain; margin-bottom: 12px;">
                 <div style="display: flex; flex-direction: column;">
-                    <span>CDDriver</span>
-                    <span style="font-size: 12px; line-height: 1.1;">Gestão Inteligente</span>
+                    <span>Nego Car</span>
+                    <span style="font-size: 12px; line-height: 1.1;">Exelência Automotiva</span>
                     <span id="admin-mode-badge" style="display: none; font-size: 11px; color: #ffeb3b; background: #ff6f00; padding: 3px 8px; border-radius: 3px; margin-top: 5px; text-align: center; font-weight: bold;">🔐 Modo Administrador</span>
                 </div>
             </div>
@@ -227,6 +262,12 @@
                         <h1 id="section-title">Dashboard</h1>
                         <p id="section-description">Visão geral do sistema NegoCar</p>
                     </div>
+                </div>
+                <div class="header-actions" style="margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 4px;">
+                    <button type="button" class="btn btn-primary" id="btn-backup-google-drive" onclick="executarBackupGoogleDrive()" disabled title="Enviar cópia do banco de dados para o Google Drive">
+                        ☁️ Backup Google Drive
+                    </button>
+                    <small id="backup-drive-header-hint" style="color: #888; max-width: 280px; text-align: right; display: none;">Peça ao administrador para configurar o backup em Configurações.</small>
                 </div>
             </div>
 
@@ -635,6 +676,33 @@
                 </button>
 
                 <hr style="margin: 30px 0;">
+
+                <div id="admin-backup-drive-panel" style="padding: 16px; background: #f0f7ff; border-radius: 8px; border: 1px solid #b8d4f0; margin-bottom: 24px;">
+                    <h4 style="margin-top: 0; color: #1565c0;">☁️ Backup no Google Drive (somente administrador)</h4>
+                    <p style="color: #555; font-size: 14px; margin-bottom: 12px;">Qualquer usuário pode usar o botão <strong>Backup Google Drive</strong> no topo da tela após você configurar aqui. As credenciais ficam salvas neste computador (<code>userData</code>).</p>
+                    <p id="backup-drive-status-text" style="font-weight: 600; margin-bottom: 12px;">—</p>
+                    <p style="font-size: 13px; color: #666; margin-bottom: 12px;">No <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Google Cloud Console</a>, crie credenciais OAuth (app para computador / Desktop), URIs de redirecionamento autorizados: <code>http://127.0.0.1:3000/api/oauth/google-drive/callback</code></p>
+                    <div class="form-group">
+                        <label>Client ID</label>
+                        <input type="text" id="backup-drive-client-id" placeholder="xxxxx.apps.googleusercontent.com" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label>Client Secret</label>
+                        <input type="password" id="backup-drive-client-secret" placeholder="Secret" autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label>ID da pasta no Drive (opcional)</label>
+                        <input type="text" id="backup-drive-folder-id" placeholder="Cole o ID ou o link da pasta">
+                    </div>
+                    <div class="form-group">
+                        <label>Refresh Token (opcional — preencha só se não usar o botão Conectar)</label>
+                        <input type="password" id="backup-drive-refresh-token" placeholder="Cole aqui após OAuth Playground ou fluxo manual" autocomplete="off">
+                    </div>
+                    <div style="display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px;">
+                        <button type="button" class="btn btn-primary" onclick="gerarLinkOAuthBackupDrive()">Conectar conta Google (abre navegador)</button>
+                        <button type="button" class="btn btn-success" onclick="salvarBackupDriveManual()">Salvar configuração manual (com Refresh Token)</button>
+                    </div>
+                </div>
 
                 <h4 style="color: var(--danger-color); margin-bottom: 15px;">⚠️ Manutenção e Limpeza</h4>
                 <p style="margin-bottom: 15px; color: #666;">Ferramentas administrativas para manutenção do sistema.</p>
@@ -1258,7 +1326,7 @@
 
     <!-- Rodapé -->
     <footer style="width:100%;text-align:center;padding:20px 0;background:#f8f9fa;color:#333;font-size:15px;position:relative;bottom:0;">
-        @ Todos os direitos reservados a Cicero Diego CDDriver
+       @ Todos os direitos reservados a Cicero Diego CDDriver  Versão 1.0.3 - 2026
     </footer>
     <script>
         // Sincronização de armazenamento local com o servidor
@@ -2466,6 +2534,10 @@
                 setInterval(() => {
                     this.verificarLembretesAgendamentos();
                 }, 3600000); // 1 hora
+
+                try {
+                    await atualizarBotaoBackupDrive();
+                } catch (e) { /* ignore */ }
                 } catch (error) {
                     console.error('Erro ao iniciar sistema:', error);
                     this.log(`Erro ao iniciar sistema: ${error.message}`, 'error');
@@ -5711,7 +5783,7 @@ Obrigado pela confiança! 🙏`;
                             navItems.forEach(nav => nav.classList.remove('active'));
                             item.classList.add('active');
                             // Abrir o módulo financeiro em nova aba (arquivo separado)
-                            window.open('/modulo-financeiro.html', '_blank');
+                            window.openWindowMaximized('/modulo-financeiro.html');
                             // Atualiza título/descrição localmente
                             const sectionInfo = sectionTitles[sectionId];
                             if (sectionInfo) {
@@ -6878,8 +6950,15 @@ Obrigado pela confiança! 🙏`;
                     if (configSection) {
                         configSection.style.display = data.isAdmin ? '' : 'none';
                     }
+                    try {
+                        if (data.isAdmin) await carregarPainelBackupDriveAdmin();
+                    } catch (errBk) { /* ignore */ }
+                    try {
+                        await atualizarBotaoBackupDrive();
+                    } catch (errBtn) { /* ignore */ }
                     return data;
                 } catch (e) {
+                    try { await atualizarBotaoBackupDrive(); } catch (_) { /* ignore */ }
                     return { isAdmin: false };
                 }
             }
@@ -6935,6 +7014,12 @@ Obrigado pela confiança! 🙏`;
                                     <option value="prazo">A Prazo</option>
                                 </select>
                             </div>
+                            <div id="campos-vista" style="display: none; margin-top: 15px;">
+                                <div class="form-group">
+                                    <label>Desconto à vista (R$)</label>
+                                    <input type="number" id="desconto-vista" min="0" step="0.01" value="0" inputmode="decimal" placeholder="0,00">
+                                </div>
+                            </div>
                             <div id="campos-parcelas" style="display: none; margin-top: 15px;">
                                 <div class="form-group">
                                     <label>Número de Parcelas *</label>
@@ -6963,13 +7048,16 @@ Obrigado pela confiança! 🙏`;
             alterarFormaPagamento() {
                 const forma = document.getElementById('forma-pagamento').value;
                 const camposParcelas = document.getElementById('campos-parcelas');
+                const camposVista = document.getElementById('campos-vista');
                 if (forma === 'prazo') {
                     camposParcelas.style.display = 'block';
+                    if (camposVista) camposVista.style.display = 'none';
                     setTimeout(() => {
                         this.calcularParcelas();
                     }, 50);
                 } else {
                     camposParcelas.style.display = 'none';
+                    if (camposVista) camposVista.style.display = (forma === 'vista') ? 'block' : 'none';
                 }
             }
 
@@ -7090,12 +7178,21 @@ Obrigado pela confiança! 🙏`;
                         await this.adicionarTransacao(parcela);
                     }
                 } else {
+                    const descontoRaw = (document.getElementById('desconto-vista')?.value || '0').toString().replace(',', '.');
+                    const descontoVista = Math.max(0, parseFloat(descontoRaw) || 0);
+                    if (descontoVista > t.valor) {
+                        alert('O desconto não pode ser maior que o valor da transação');
+                        return;
+                    }
+                    const valorBruto = t.valor;
+                    const valorLiquido = Math.max(0, valorBruto - descontoVista);
+
                     // Registrar histórico antes de alterar
                     this.registrarHistoricoTransacao({
                         acao: 'alteracao',
                         transacaoId: id,
                         dadosAntigos: { ...t },
-                        dadosNovos: { ...t, status: 'confirmado', formaPagamento: 'vista' },
+                        dadosNovos: { ...t, status: 'confirmado', formaPagamento: 'vista', valorBruto, descontoAVista: descontoVista, valor: valorLiquido },
                         motivo: 'Confirmação de pagamento à vista'
                     });
 
@@ -7103,7 +7200,10 @@ Obrigado pela confiança! 🙏`;
                     await this.atualizarTransacaoServidor(id, {
                         status: 'confirmado',
                         confirmadoEm: new Date().toISOString(),
-                        formaPagamento: 'vista'
+                        formaPagamento: 'vista',
+                        valorBruto,
+                        descontoAVista: descontoVista,
+                        valor: valorLiquido
                     });
                     
                     // Se for receita de orçamento, marcar como liquidado
@@ -7130,6 +7230,9 @@ Obrigado pela confiança! 🙏`;
             emitirRecibo(transacao, orcamento) {
                 const cliente = this.dados.clientes.find(c => c.id === orcamento.clienteId);
                 const veiculo = this.dados.veiculos.find(v => v.id === orcamento.veiculoId);
+                const valorBruto = (typeof transacao.valorBruto === 'number' ? transacao.valorBruto : transacao.valor);
+                const descontoAVista = (typeof transacao.descontoAVista === 'number' ? transacao.descontoAVista : 0);
+                const valorLiquido = (typeof transacao.valor === 'number' ? transacao.valor : (valorBruto - descontoAVista));
                 
                 const reciboHTML = `
                     <!DOCTYPE html>
@@ -7160,7 +7263,8 @@ Obrigado pela confiança! 🙏`;
                             <p><strong>Forma de Pagamento:</strong> À Vista</p>
                         </div>
                         <div class="recibo-total">
-                            <p>VALOR RECEBIDO: R$ ${transacao.valor.toFixed(2)}</p>
+                            ${descontoAVista > 0 ? `<p>VALOR BRUTO: R$ ${valorBruto.toFixed(2)}</p><p>DESCONTO À VISTA: R$ ${descontoAVista.toFixed(2)}</p>` : ``}
+                            <p>VALOR RECEBIDO: R$ ${valorLiquido.toFixed(2)}</p>
                         </div>
                         <div class="assinatura">
                             <p>_________________________________________</p>
@@ -9436,6 +9540,132 @@ Obrigado pela confiança! 🙏`;
             window.excluirTransacaoFinanceiro = excluirTransacaoFinanceiro;
         }
 
+        async function atualizarBotaoBackupDrive() {
+            const btn = document.getElementById('btn-backup-google-drive');
+            const hint = document.getElementById('backup-drive-header-hint');
+            if (!btn) return;
+            try {
+                const r = await fetch('/api/backup/drive/status');
+                const d = await r.json();
+                btn.disabled = !d.configured;
+                if (hint) {
+                    hint.style.display = d.configured ? 'none' : 'block';
+                }
+            } catch (e) {
+                btn.disabled = true;
+                if (hint) hint.style.display = 'block';
+            }
+        }
+
+        async function executarBackupGoogleDrive() {
+            try {
+                const st = await fetch('/api/backup/drive/status');
+                const d = await st.json();
+                if (!d.configured) {
+                    alert('O backup no Google Drive ainda não foi configurado.\nPeça ao administrador para configurar em Configurações (somente admin).');
+                    return;
+                }
+            } catch (e) {
+                alert('Não foi possível verificar a configuração do backup.');
+                return;
+            }
+            if (!confirm('Enviar agora uma cópia do banco de dados para o Google Drive?')) return;
+            const btn = document.getElementById('btn-backup-google-drive');
+            if (btn) btn.disabled = true;
+            try {
+                const r = await fetch('/api/backup/drive', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include'
+                });
+                const out = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(out.error || 'Falha no backup');
+                let msg = 'Backup enviado: ' + (out.fileName || 'arquivo');
+                if (out.webViewLink) msg += '\n\nAbrir: ' + out.webViewLink;
+                alert(msg);
+            } catch (e) {
+                alert(e.message || 'Erro ao enviar backup');
+            } finally {
+                await atualizarBotaoBackupDrive();
+            }
+        }
+
+        async function carregarPainelBackupDriveAdmin() {
+            const box = document.getElementById('admin-backup-drive-panel');
+            if (!box) return;
+            try {
+                const r = await fetch('/api/admin/backup-drive/config', { credentials: 'include' });
+                if (r.status === 403) return;
+                const d = await r.json();
+                const folderEl = document.getElementById('backup-drive-folder-id');
+                if (folderEl) folderEl.value = d.folderId || '';
+                const st = document.getElementById('backup-drive-status-text');
+                if (st) {
+                    st.textContent = d.configured
+                        ? 'Status: configurado e pronto para uso pelo botão no topo.'
+                        : 'Status: ainda não configurado — use Conectar Google ou salve manualmente com Refresh Token.';
+                }
+            } catch (e) { /* ignore */ }
+        }
+
+        async function gerarLinkOAuthBackupDrive() {
+            const clientId = document.getElementById('backup-drive-client-id').value.trim();
+            const clientSecret = document.getElementById('backup-drive-client-secret').value.trim();
+            const folderId = document.getElementById('backup-drive-folder-id').value.trim();
+            if (!clientId || !clientSecret) {
+                alert('Preencha Client ID e Client Secret.');
+                return;
+            }
+            try {
+                const r = await fetch('/api/admin/backup-drive/oauth-url', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ clientId, clientSecret, folderId })
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(d.error || 'Erro ao gerar link');
+                window.open(d.authUrl, '_blank', 'noopener,noreferrer');
+                alert('Faça login e autorize o acesso na janela do Google. Depois feche a janela e teste o backup no topo da tela.');
+            } catch (e) {
+                alert(e.message || 'Erro');
+            }
+        }
+
+        async function salvarBackupDriveManual() {
+            const clientId = document.getElementById('backup-drive-client-id').value.trim();
+            const clientSecret = document.getElementById('backup-drive-client-secret').value.trim();
+            const refreshToken = document.getElementById('backup-drive-refresh-token').value.trim();
+            const folderId = document.getElementById('backup-drive-folder-id').value.trim();
+            if (!clientId || !clientSecret || !refreshToken) {
+                alert('Para salvar manualmente, preencha Client ID, Client Secret e Refresh Token.');
+                return;
+            }
+            try {
+                const r = await fetch('/api/admin/backup-drive/config', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ clientId, clientSecret, refreshToken, folderId })
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok) throw new Error(d.error || 'Erro ao salvar');
+                alert('Configuração salva.');
+                const rt = document.getElementById('backup-drive-refresh-token');
+                if (rt) rt.value = '';
+                await carregarPainelBackupDriveAdmin();
+                await atualizarBotaoBackupDrive();
+            } catch (e) {
+                alert(e.message || 'Erro');
+            }
+        }
+
+        window.atualizarBotaoBackupDrive = atualizarBotaoBackupDrive;
+        window.executarBackupGoogleDrive = executarBackupGoogleDrive;
+        window.carregarPainelBackupDriveAdmin = carregarPainelBackupDriveAdmin;
+        window.gerarLinkOAuthBackupDrive = gerarLinkOAuthBackupDrive;
+        window.salvarBackupDriveManual = salvarBackupDriveManual;
+
         // Inicialização assíncrona garantindo sincronização com o servidor
         let sistema = null;
 
@@ -9463,10 +9693,9 @@ Obrigado pela confiança! 🙏`;
 
         // Abre o módulo financeiro em nova aba e mantém referência
         function openFinanceiro() {
-            const url = '/modulo-financeiro.html';
-            const win = window.open(url, '_blank');
+            const win = window.openWindowMaximized('/modulo-financeiro.html');
             if (!win) {
-                alert('Não foi possível abrir nova aba. Verifique o bloqueador de popups.');
+                alert('Não foi possível abrir o Financeiro. Tente de novo ou acesse /modulo-financeiro.html pelo navegador.');
             }
         }
 

@@ -4,6 +4,13 @@ database.db-journal
 *.db
 *.db-journal
 
+# Instalador / build
+dist/
+backups/
+*.exe
+*.blockmap
+*.yml
+
 # Node modules
 node_modules/
 
@@ -14,4 +21,3 @@ npm-debug.log*
 # Sistema operacional
 .DS_Store
 Thumbs.db
-

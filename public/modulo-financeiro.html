@@ -9,6 +9,20 @@
     <!-- Air Datepicker CSS removed (month selector not used) -->
 </head>
 <body>
+    <script>
+        (function maximizeFinanceiroView() {
+            function run() {
+                try {
+                    if (window.screen && typeof window.resizeTo === 'function') {
+                        window.resizeTo(window.screen.availWidth, window.screen.availHeight);
+                        window.moveTo(0, 0);
+                    }
+                } catch (e) {}
+            }
+            run();
+            window.addEventListener('load', run);
+        })();
+    </script>
     <div class="app-container">
     <!-- Sidebar -->
     <nav class="sidebar">
@@ -281,7 +295,7 @@
             <h2>Relatórios</h2>
             
             <div class="tabs">
-                <div class="tab active" onclick="showTab('rel-duplicatas')">Duplicatas Parceladas</div>
+                <div class="tab active" onclick="showTab('rel-duplicatas')">Contas a Receber</div>
                 <div class="tab" onclick="showTab('rel-pagar')">Contas a Pagar</div>
                 <div class="tab" onclick="showTab('rel-inadimplencia')">Inadimplência</div>
             </div>
@@ -316,9 +330,9 @@
                 </div>
 
                 <div class="table-container">
-                    <table class="data-table" id="tabela-relatorio">
-                        <!-- Carregado via JS -->
-                    </table>
+                    <div id="tabela-relatorio" class="relatorio-saida">
+                        <!-- relatório injetado via JS (precisa ser div: contém título + tabela) -->
+                    </div>
                 </div>
             </div>
 
@@ -337,6 +351,7 @@
                         <select id="rel-pagar-status">
                             <option value="todos">Todos</option>
                             <option value="aberto">Aberto</option>
+                            <option value="parcial">Parcial</option>
                             <option value="pago">Pago</option>
                             <option value="atrasado">Atrasado</option>
                         </select>
@@ -349,9 +364,9 @@
                 </div>
 
                 <div class="table-container">
-                    <table class="data-table" id="tabela-relatorio-pagar">
-                        <!-- Carregado via JS -->
-                    </table>
+                    <div id="tabela-relatorio-pagar" class="relatorio-saida">
+                        <!-- relatório injetado via JS -->
+                    </div>
                 </div>
             </div>
 
@@ -373,9 +388,9 @@
                 </div>
 
                 <div class="table-container">
-                    <table class="data-table" id="tabela-relatorio-inadimplencia">
-                        <!-- Carregado via JS -->
-                    </table>
+                    <div id="tabela-relatorio-inadimplencia" class="relatorio-saida">
+                        <!-- relatório injetado via JS -->
+                    </div>
                 </div>
             </div>
                 </div>
@@ -411,8 +426,12 @@
 
                 <p style="color:#555;font-size:14px;margin-bottom:15px">Esta ação fará backup dos registros selecionados e os removerá permanentemente do banco de dados.</p>
                 <div class="form-group">
-                    <label for="cleanup-before-date">Remover registros com data/vencimento anteriores a:</label>
-                    <input type="date" id="cleanup-before-date">
+                    <label for="cleanup-start-date">Remover registros com data/vencimento de:</label>
+                    <input type="date" id="cleanup-start-date">
+                </div>
+                <div class="form-group">
+                    <label for="cleanup-end-date">até:</label>
+                    <input type="date" id="cleanup-end-date">
                 </div>
                 <div class="form-group">
                     <label for="cleanup-admin-pass">Senha administrativa (se configurada)</label>
@@ -562,6 +581,13 @@
                             <option value="entrada">Entrada + Parcelas</option>
                         </select>
                     </div>
+
+                    <div id="campos-avista" class="hidden">
+                        <div class="form-group">
+                            <label for="desconto-avista-receber">Desconto à vista (R$)</label>
+                            <input type="number" id="desconto-avista-receber" step="0.01" min="0" value="0" placeholder="0,00">
+                        </div>
+                    </div>
                     
                     <div id="campos-parcelado" class="hidden">
                         <div class="form-row">
@@ -646,6 +672,84 @@
         </div>
     </div>
 
+    <!-- Modal Editar lançamento (contas a receber — exige senha admin no servidor) -->
+    <div id="modal-editar-receber" class="modal">
+        <div class="modal-content" style="max-width:520px">
+            <div class="modal-header">
+                <h3>Editar lançamento a receber</h3>
+                <button class="modal-close" onclick="hideModal('modal-editar-receber')">&times;</button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="edit-receber-id" value="">
+                <p style="font-size:13px;color:#666;margin:0 0 12px 0">A alteração no servidor exige a senha do administrador (ou sessão admin já ativa).</p>
+                <div class="form-group">
+                    <label for="edit-receber-descricao">Descrição</label>
+                    <input type="text" id="edit-receber-descricao" class="form-control" autocomplete="off">
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:1">
+                        <label for="edit-receber-valor">Valor base (R$)</label>
+                        <input type="number" id="edit-receber-valor" step="0.01" min="0" class="form-control"
+                            oninput="if(typeof ui!=='undefined')ui.atualizarPreviewEditReceberValorLiquido()">
+                        <small style="font-size:11px;color:#666">Total antes do desconto (como no recebimento à vista).</small>
+                    </div>
+                    <div class="form-group" style="flex:1">
+                        <label for="edit-receber-vencimento">Vencimento</label>
+                        <input type="date" id="edit-receber-vencimento" class="form-control">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="edit-receber-desconto">Desconto (R$)</label>
+                    <input type="number" id="edit-receber-desconto" step="0.01" min="0" class="form-control" placeholder="0,00" value="0"
+                        oninput="if(typeof ui!=='undefined')ui.atualizarPreviewEditReceberValorLiquido()">
+                    <small style="display:block;font-size:11px;color:#666;margin-top:4px">Desconto aplicado neste lançamento (ex.: à vista).</small>
+                    <div id="edit-receber-valor-liquido-preview" style="margin-top:10px;font-weight:600;color:#27ae60;font-size:15px">Valor a receber (líquido): —</div>
+                </div>
+                <div class="form-group">
+                    <label for="edit-receber-status">Situação</label>
+                    <select id="edit-receber-status" class="form-control" onchange="ui.toggleEditReceberDataPagamento()">
+                        <option value="aberto">Aberto</option>
+                        <option value="atrasado">Atrasado</option>
+                        <option value="pago">Pago</option>
+                    </select>
+                </div>
+                <div class="form-group" id="edit-receber-row-data-pagamento" style="display:none">
+                    <label for="edit-receber-data-pagamento">Data do pagamento</label>
+                    <input type="date" id="edit-receber-data-pagamento" class="form-control">
+                </div>
+                <div class="form-group">
+                    <label for="edit-receber-observacoes">Observações</label>
+                    <textarea id="edit-receber-observacoes" rows="3" class="form-control"></textarea>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="btn btn-secondary" onclick="hideModal('modal-editar-receber')">Cancelar</button>
+                    <button type="button" class="btn btn-success" onclick="ui.salvarEdicaoReceber()">
+                        <i class="fas fa-save"></i> Salvar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Senha admin (Electron não suporta window.prompt) -->
+    <div id="modal-senha-admin-edicao" class="modal" style="z-index:3000">
+        <div class="modal-content" style="max-width:420px">
+            <div class="modal-header">
+                <h3>Confirmar administrador</h3>
+                <button type="button" class="modal-close" onclick="ui._cancelarModalSenhaAdmin()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size:14px;color:#444;margin:0 0 12px 0">Digite a senha do administrador para gravar a alteração no servidor.</p>
+                <input type="password" id="input-senha-admin-edicao" class="form-control" autocomplete="current-password"
+                    onkeydown="if(event.key==='Enter'){event.preventDefault();if(typeof ui!=='undefined')ui._confirmarModalSenhaAdmin();}">
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="btn btn-secondary" onclick="ui._cancelarModalSenhaAdmin()">Cancelar</button>
+                <button type="button" class="btn btn-success" onclick="ui._confirmarModalSenhaAdmin()">Confirmar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal Visualizar Duplicata -->
     <div id="modal-visualizar-duplicata" class="modal">
         <div class="modal-content" style="max-width:600px">
@@ -676,23 +780,22 @@
                         <div id="vis-dup-vencimento"></div>
                     </div>
                 </div>
-                <div class="form-row">
-                    <div class="form-group" style="flex:1">
-                        <label>Valor</label>
-                        <div id="vis-dup-valor"></div>
-                    </div>
-                    <div class="form-group" style="flex:1">
-                        <label>Status</label>
-                        <div id="vis-dup-status"></div>
-                    </div>
+                <div class="form-group">
+                    <div id="vis-dup-bloco-valores" style="line-height:1.85;font-size:15px;color:#222"></div>
+                </div>
+                <div class="form-group">
+                    <label>Status</label>
+                    <div id="vis-dup-status"></div>
                 </div>
                 <div id="vis-dup-historico-pagamentos" style="margin-top:10px"></div>
             </div>
-            <div class="modal-footer" style="display:flex;gap:8px;justify-content:flex-end">
-                <button class="btn btn-secondary" onclick="hideModal('modal-visualizar-duplicata')">Fechar</button>
-                <button class="btn btn-whatsapp" onclick="ui.enviarWhatsAppDuplicata(ui.duplicataAtual.id)">Enviar WhatsApp</button>
-                <button id="btn-marcar-pago-visualizar" class="btn btn-success" onclick="ui.marcarComoPago(ui.duplicataAtual.id)">Marcar como pago</button>
-                <button class="btn btn-primary" onclick="(function(){ try { whatsappManager.abrirReciboImprimivel(ui.clienteAtual, ui.duplicataAtual); } catch(e){ console.warn(e); } })()">Imprimir / Recibo</button>
+            <div class="modal-footer" style="display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end;align-items:center;padding:10px 14px">
+                <button type="button" class="btn btn-secondary btn-sm" style="padding:5px 10px;font-size:12px" onclick="hideModal('modal-visualizar-duplicata')">Fechar</button>
+                <button type="button" class="btn btn-whatsapp btn-sm" style="padding:5px 10px;font-size:12px" onclick="ui.enviarWhatsAppDuplicata(ui.duplicataAtual.id)"><i class="fab fa-whatsapp"></i> WhatsApp</button>
+                <button type="button" id="btn-marcar-pago-visualizar" class="btn btn-success btn-sm" style="padding:5px 10px;font-size:12px" onclick="ui.marcarComoPago(ui.duplicataAtual.id)"><i class="fas fa-check"></i> Pago</button>
+                <button type="button" class="btn btn-primary btn-sm" style="padding:5px 10px;font-size:12px" onclick="(function(){ try { whatsappManager.abrirReciboImprimivel(ui.clienteAtual, ui.duplicataAtual); } catch(e){ console.warn(e); } })()"><i class="fas fa-print"></i> Recibo</button>
+                <button type="button" id="btn-editar-dup-visualizar" class="btn btn-sm" style="padding:5px 10px;font-size:12px;background:#34495e;color:#fff;border:1px solid #2c3e50" onclick="ui.abrirEditarReceberDesdeVisualizar()" title="Editar lançamento (senha do administrador)"><i class="fas fa-edit"></i> Editar</button>
+                <button type="button" id="btn-excluir-dup-visualizar" class="btn btn-danger btn-sm" style="padding:5px 10px;font-size:12px" onclick="ui.deletarDuplicataReceber()" title="Excluir duplicata (senha do administrador)"><i class="fas fa-trash"></i> Excluir</button>
             </div>
         </div>
     </div>
@@ -755,6 +858,7 @@
                     <i class="fas fa-trash"></i> Deletar
                 </button>
                 <button class="btn btn-secondary" onclick="hideModal('modal-visualizar-fornecedor')">Fechar</button>
+                <button class="btn btn-primary" id="btn-pagamento-parcial-forn" onclick="ui.iniciarPagamentoParcialPagar(ui.contaPagarAtual.id)">Pagamento parcial</button>
                 <button class="btn btn-success" id="btn-marcar-pago-forn" onclick="ui.marcarComoPagoPagar(ui.contaPagarAtual.id)">Marcar como pago</button>
             </div>
         </div>
@@ -882,6 +986,9 @@
                 <div class="modal-actions">
                     <button class="btn btn-success" onclick="ui.marcarComoPagoPagarDoResumo()" id="btn-marcar-pago">
                         <i class="fas fa-check"></i> Marcar como Pago
+                    </button>
+                    <button class="btn btn-primary" onclick="ui.iniciarPagamentoParcialPagarDoResumo()" id="btn-parcial-pago">
+                        <i class="fas fa-coins"></i> Pagamento parcial
                     </button>
                     <button class="btn btn-danger" onclick="ui.deletarPagamento(document.getElementById('resumo-parcela-id').value)" id="btn-deletar">
                         <i class="fas fa-trash"></i> Deletar
@@ -1552,9 +1659,28 @@
             async getTotalPagarHoje() {
                 const hoje = new Date().toISOString().split('T')[0];
                 const pagar = await this.getAll('pagar', 'vencimento', hoje);
+                const isPaid = (it) => {
+                    if (!it) return false;
+                    const st = (it.status || it.situacao || it.estado || '') + '';
+                    const s = st.toString().toLowerCase();
+                    return s === 'pago' || s === 'paid' || it.pago === true || it.confirmado === 1 || it.confirmado === '1' || it.dataPagamento || it.data_pagamento || it.confirmadoEm || it.confirmado_em;
+                };
+                const getValorPago = (it) => {
+                    if (!it) return 0;
+                    if (typeof it.valorPago !== 'undefined' && it.valorPago !== null) return Number(it.valorPago) || 0;
+                    if (Array.isArray(it.historicoPagamentos)) return it.historicoPagamentos.reduce((s, h) => s + (Number(h.valor) || 0), 0);
+                    if (it.observacoes) {
+                        try {
+                            const obs = typeof it.observacoes === 'string' ? JSON.parse(it.observacoes) : it.observacoes;
+                            if (obs && Array.isArray(obs.historicoPagamentos)) return obs.historicoPagamentos.reduce((s, h) => s + (Number(h.valor) || 0), 0);
+                        } catch (e) {}
+                    }
+                    return 0;
+                };
+                const saldoRestante = (it) => Math.max(0, (Number(it?.valor) || 0) - getValorPago(it));
                 return pagar
-                    .filter(p => p.status === 'aberto')
-                    .reduce((total, p) => total + (p.valor || 0), 0);
+                    .filter(p => !isPaid(p))
+                    .reduce((total, p) => total + saldoRestante(p), 0);
             }
 
             async getVencimentosHoje() {
@@ -1564,7 +1690,7 @@
                 
                 return {
                     receber: receber.filter(r => r.status === 'aberto'),
-                    pagar: pagar.filter(p => p.status === 'aberto')
+                    pagar: pagar.filter(p => (p.status || '').toLowerCase() !== 'pago')
                 };
             }
 
@@ -1601,8 +1727,12 @@
                         .reduce((sum, r) => sum + (r.valor || 0), 0);
                         
                     const totalPagar = pagar
-                        .filter(p => p.status === 'aberto')
-                        .reduce((sum, p) => sum + (p.valor || 0), 0);
+                        .filter(p => (p.status || '').toLowerCase() !== 'pago')
+                        .reduce((sum, p) => {
+                            const valor = Number(p.valor) || 0;
+                            const valorPago = (typeof p.valorPago !== 'undefined' && p.valorPago !== null) ? (Number(p.valorPago) || 0) : (Array.isArray(p.historicoPagamentos) ? p.historicoPagamentos.reduce((s, h) => s + (Number(h.valor) || 0), 0) : 0);
+                            return sum + Math.max(0, valor - valorPago);
+                        }, 0);
                     
                     fluxo.push({
                         data: dataStr,
@@ -2102,14 +2232,23 @@
                 const nome = cliente && cliente.nome ? cliente.nome : (duplicata.cliente || 'Cliente');
                 const telefone = cliente && cliente.telefone ? cliente.telefone : '';
                 const dataPagamento = duplicata.dataPagamento || new Date().toISOString().split('T')[0];
-                const valorPago = duplicata.valorPago != null ? Number(duplicata.valorPago).toFixed(2) : (duplicata.valor != null ? Number(duplicata.valor).toFixed(2) : '0.00');
-                return `RECIBO DE PAGAMENTO\n\nOficina Mecânica Nego Car\nCliente: ${nome}\nTelefone: ${telefone}\nDescrição: ${duplicata.descricao}\nParcela: ${duplicata.parcela || ''}\nData Pagamento: ${this.formatarDataBR(dataPagamento)}\nValor Pago: R$ ${valorPago}\n\nObservações: ${duplicata.observacoes || ''}\n\nObrigado pela preferência!`;
+                const descontoAVista = Number(duplicata.descontoAVista || 0);
+                const valorPagoCalculado = Number(duplicata.valor || 0);
+                const valorPago = duplicata.valorPago != null && Number(duplicata.valorPago) > 0
+                    ? Number(duplicata.valorPago).toFixed(2)
+                    : valorPagoCalculado.toFixed(2);
+                const blocoDesconto = descontoAVista > 0 ? `\nDesconto: R$ ${descontoAVista.toFixed(2)}` : '';
+                return `RECIBO DE PAGAMENTO\n\nOficina Mecânica Nego Car\nCliente: ${nome}\nTelefone: ${telefone}\nDescrição: ${duplicata.descricao}\nParcela: ${duplicata.parcela || ''}\nData Pagamento: ${this.formatarDataBR(dataPagamento)}\nValor Pago: R$ ${valorPago}${blocoDesconto}\n\nObservações: ${duplicata.observacoes || ''}\n\nObrigado pela preferência!`;
             }
 
             // Abre uma janela imprimível com o recibo e um botão para enviar via WhatsApp (app)
             abrirReciboImprimivel(cliente, duplicata) {
                 // Valor pago: se houver valorPago, mostrar ele; senão, mostrar valor total
-                const valorPago = duplicata.valorPago != null ? Number(duplicata.valorPago).toFixed(2) : (duplicata.valor != null ? Number(duplicata.valor).toFixed(2) : '0.00');
+                const descontoAVista = Number(duplicata.descontoAVista || 0);
+                const valorPagoCalculado = Number(duplicata.valor || 0);
+                const valorPago = duplicata.valorPago != null && Number(duplicata.valorPago) > 0
+                    ? Number(duplicata.valorPago).toFixed(2)
+                    : valorPagoCalculado.toFixed(2);
                 const reciboHtml = `
                     <html>
                     <head>
@@ -2136,6 +2275,7 @@
                             <div class="linha"><strong>Parcela:</strong><span>${duplicata.parcela || ''}</span></div>
                             <div class="linha"><strong>Data Pagamento:</strong><span>${this.formatarDataBR(duplicata.dataPagamento || new Date().toISOString().split('T')[0])}</span></div>
                             <div class="linha"><strong>Valor Pago:</strong><span>R$ ${valorPago}</span></div>
+                            ${descontoAVista > 0 ? `<div class="linha"><strong>Desconto:</strong><span>R$ ${descontoAVista.toFixed(2)}</span></div>` : ''}
                             <div style="margin-top:10px"><strong>Observações:</strong><div>${duplicata.observacoes || ''}</div></div>
                             <div class="btns">
                                 <button class="btn btn-print" onclick="window.print()">Imprimir / Salvar PDF</button>
@@ -2146,7 +2286,9 @@
                     </html>
                 `;
 
-                const w = window.open('', '_blank', 'toolbar=0,location=0,menubar=0,width=800,height=700');
+                const sw = (window.screen && window.screen.availWidth) ? window.screen.availWidth : 800;
+                const sh = (window.screen && window.screen.availHeight) ? window.screen.availHeight : 700;
+                const w = window.open('', '_blank', 'toolbar=0,location=0,menubar=0,width=' + sw + ',height=' + sh + ',left=0,top=0');
                 if (!w) {
                     showToast('Não foi possível abrir a janela de recibo. Verifique o bloqueador de popups.', 'error');
                     return;
@@ -2190,6 +2332,7 @@
                 this.clienteAtual = null;
                 this.orcamentoAtual = null;
                 this.clienteSelecionado = null;
+                this._senhaAdminResolve = null;
             }
 
             // Verifica IDs duplicados no DOM e loga avisos (ajuda a detectar conflitos de ID)
@@ -2689,6 +2832,7 @@
 
                 switch(status) {
                     case 'aberto': return '<span class="badge badge-warning">Aberto</span>';
+                    case 'parcial': return '<span class="badge" style="background:#3498db;color:#fff">Parcial</span>';
                     case 'pago': return '<span class="badge badge-success">Pago</span>';
                     case 'atrasado': return '<span class="badge badge-danger">Atrasado</span>';
                     default: return '<span class="badge">' + (status || (item && (item.parcelado ? 'Parcelado' : '')) ) + '</span>';
@@ -2705,6 +2849,208 @@
             formatarData(dataISO) {
                 if (!dataISO) return '-';
                 return new Date(dataISO).toLocaleDateString('pt-BR');
+            }
+
+            dataParaInputDate(val) {
+                if (val == null || val === '') return '';
+                const s = String(val).trim();
+                if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+                const m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+                if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+                const d = new Date(s);
+                if (!Number.isNaN(d.getTime())) return d.toISOString().split('T')[0];
+                return '';
+            }
+
+            async obterSenhaAdminSeNecessario() {
+                try {
+                    const r = await fetch('/api/admin/status', { credentials: 'include' });
+                    const j = await r.json().catch(() => ({}));
+                    if (j && j.isAdmin) return '';
+                } catch (e) { /* ignora */ }
+                // Electron / WebView costuma desabilitar window.prompt — usar modal próprio
+                return this._mostrarModalSenhaAdmin();
+            }
+
+            _mostrarModalSenhaAdmin() {
+                return new Promise((resolve) => {
+                    this._senhaAdminResolve = resolve;
+                    const inp = document.getElementById('input-senha-admin-edicao');
+                    if (inp) {
+                        inp.value = '';
+                        setTimeout(() => {
+                            try { inp.focus(); } catch (err) { /* ignore */ }
+                        }, 150);
+                    }
+                    showModal('modal-senha-admin-edicao');
+                });
+            }
+
+            _confirmarModalSenhaAdmin() {
+                const inp = document.getElementById('input-senha-admin-edicao');
+                const t = inp ? String(inp.value || '').trim() : '';
+                if (!t) {
+                    showToast('Informe a senha do administrador.', 'warning');
+                    return;
+                }
+                hideModal('modal-senha-admin-edicao');
+                const r = this._senhaAdminResolve;
+                this._senhaAdminResolve = null;
+                if (r) r(t);
+            }
+
+            _cancelarModalSenhaAdmin() {
+                hideModal('modal-senha-admin-edicao');
+                const r = this._senhaAdminResolve;
+                this._senhaAdminResolve = null;
+                if (r) r(null);
+            }
+
+            toggleEditReceberDataPagamento() {
+                const el = document.getElementById('edit-receber-status');
+                const st = el ? el.value : '';
+                const row = document.getElementById('edit-receber-row-data-pagamento');
+                if (row) row.style.display = st === 'pago' ? 'block' : 'none';
+            }
+
+            atualizarPreviewEditReceberValorLiquido() {
+                const elOut = document.getElementById('edit-receber-valor-liquido-preview');
+                if (!elOut) return;
+                const bruto = parseFloat(String(document.getElementById('edit-receber-valor')?.value || '0').replace(',', '.')) || 0;
+                const desc = Math.max(0, parseFloat(String(document.getElementById('edit-receber-desconto')?.value || '0').replace(',', '.')) || 0);
+                const liq = Math.max(0, Number((bruto - desc).toFixed(2)));
+                if (desc > bruto + 0.0001) {
+                    elOut.textContent = 'Valor a receber (líquido): — (desconto maior que o valor base)';
+                    elOut.style.color = '#c0392b';
+                    return;
+                }
+                elOut.style.color = '#27ae60';
+                elOut.textContent = `Valor a receber (líquido): ${this.formatarMoeda(liq)}`;
+            }
+
+            abrirEditarReceberDesdeVisualizar() {
+                const d = this.duplicataAtual;
+                if (!d || d.id == null) return;
+                hideModal('modal-visualizar-duplicata');
+                this.abrirModalEditarReceber(d.id);
+            }
+
+            async abrirModalEditarReceber(id) {
+                try {
+                    const item = await this.db.get('receber', id);
+                    if (!item) {
+                        showToast('Registro não encontrado', 'error');
+                        return;
+                    }
+                    const sid = String(id);
+                    if (!/^\d+$/.test(sid)) {
+                        showToast('Só é possível editar lançamentos já sincronizados com o servidor (ID numérico).', 'warning');
+                        return;
+                    }
+                    document.getElementById('edit-receber-id').value = sid;
+                    document.getElementById('edit-receber-descricao').value = item.descricao || '';
+                    const descontoItem = Number(item.descontoAVista != null ? item.descontoAVista : (item.desconto != null ? item.desconto : 0)) || 0;
+                    const valorLiquidoArmazenado = Number(item.valor != null && item.valor !== '' ? item.valor : 0) || 0;
+                    let valorBruto;
+                    if (item.valorBruto != null && item.valorBruto !== '' && !Number.isNaN(Number(item.valorBruto))) {
+                        valorBruto = Number(item.valorBruto);
+                    } else {
+                        valorBruto = Number((valorLiquidoArmazenado + descontoItem).toFixed(2));
+                    }
+                    document.getElementById('edit-receber-valor').value = valorBruto;
+                    document.getElementById('edit-receber-desconto').value = descontoItem;
+                    this.atualizarPreviewEditReceberValorLiquido();
+                    document.getElementById('edit-receber-vencimento').value = this.dataParaInputDate(item.vencimento || item.data);
+                    document.getElementById('edit-receber-observacoes').value = item.observacoes || '';
+                    const st = (item.status || 'aberto').toLowerCase();
+                    const sel = document.getElementById('edit-receber-status');
+                    sel.value = ['aberto', 'atrasado', 'pago'].includes(st) ? st : 'aberto';
+                    document.getElementById('edit-receber-data-pagamento').value = this.dataParaInputDate(item.dataPagamento || item.data_pagamento);
+                    this.toggleEditReceberDataPagamento();
+                    showModal('modal-editar-receber');
+                } catch (e) {
+                    console.error(e);
+                    showToast('Erro ao abrir edição', 'error');
+                }
+            }
+
+            async salvarEdicaoReceber() {
+                try {
+                    const id = document.getElementById('edit-receber-id').value;
+                    const idNorm = this.db.normalizarId(id);
+                    if (!idNorm || !/^\d+$/.test(idNorm)) {
+                        showToast('ID inválido', 'error');
+                        return;
+                    }
+
+                    const pwd = await this.obterSenhaAdminSeNecessario();
+                    if (pwd === null) return;
+
+                    const status = document.getElementById('edit-receber-status').value;
+                    const valorBruto = parseFloat(String(document.getElementById('edit-receber-valor').value || '0').replace(',', '.')) || 0;
+                    const descontoNum = Math.max(0, parseFloat(String(document.getElementById('edit-receber-desconto').value || '0').replace(',', '.')) || 0);
+                    if (descontoNum > valorBruto + 0.0001) {
+                        showToast('O desconto não pode ser maior que o valor base.', 'warning');
+                        return;
+                    }
+                    const valorLiquido = Math.max(0, Number((valorBruto - descontoNum).toFixed(2)));
+                    const body = {
+                        tipo: 'receber',
+                        status,
+                        descricao: (document.getElementById('edit-receber-descricao').value || '').trim(),
+                        valor: valorLiquido,
+                        valorBruto,
+                        desconto: descontoNum,
+                        descontoAVista: descontoNum,
+                        vencimento: document.getElementById('edit-receber-vencimento').value,
+                        observacoes: (document.getElementById('edit-receber-observacoes').value || '').trim()
+                    };
+                    if (status === 'pago') {
+                        body.dataPagamento = document.getElementById('edit-receber-data-pagamento').value || new Date().toISOString().split('T')[0];
+                    } else {
+                        body.dataPagamento = null;
+                    }
+
+                    const headers = { 'Content-Type': 'application/json' };
+                    if (pwd) headers['x-admin-password'] = pwd;
+
+                    const res = await fetch(`/api/financeiro/${idNorm}`, {
+                        method: 'PUT',
+                        credentials: 'include',
+                        headers,
+                        body: JSON.stringify(body)
+                    });
+                    const json = await res.json().catch(() => ({}));
+                    if (!res.ok) {
+                        showToast(json.error || 'Erro ao salvar alterações', 'error');
+                        return;
+                    }
+
+                    const items = this.db.getAllSync('receber');
+                    const idx = items.findIndex(it => String(it.id) === String(idNorm));
+                    if (idx >= 0) {
+                        items[idx] = Object.assign({}, items[idx], {
+                            descricao: body.descricao,
+                            valor: body.valor,
+                            valorBruto: body.valorBruto,
+                            desconto: body.descontoAVista,
+                            descontoAVista: body.descontoAVista,
+                            vencimento: body.vencimento,
+                            observacoes: body.observacoes,
+                            status: body.status,
+                            dataPagamento: body.dataPagamento || null
+                        });
+                        localStorage.setItem(this.db.storageKeys.receber, JSON.stringify(items));
+                    }
+
+                    showToast('Lançamento atualizado.', 'success');
+                    hideModal('modal-editar-receber');
+                    this.carregarReceber();
+                    this.carregarDadosDashboard();
+                } catch (e) {
+                    console.error(e);
+                    showToast(e.message || 'Erro ao salvar', 'error');
+                }
             }
 
             async verificarVencimentos() {
@@ -2908,6 +3254,142 @@
                 }
             }
 
+            async iniciarPagamentoParcialPagar(id) {
+                try {
+                    const conta = await this.db.get('pagar', id);
+                    if (!conta) return;
+                    this.abrirModalPagamentoParcialPagar(conta);
+                } catch (e) {
+                    console.error('Erro ao iniciar pagamento parcial (pagar):', e);
+                    showToast('Erro ao abrir pagamento parcial', 'error');
+                }
+            }
+
+            iniciarPagamentoParcialPagarDoResumo() {
+                try {
+                    const id = document.getElementById('resumo-parcela-id')?.value;
+                    if (!id) return;
+                    this.iniciarPagamentoParcialPagar(id);
+                } catch (e) {
+                    console.error('Erro ao iniciar pagamento parcial do resumo:', e);
+                }
+            }
+
+            abrirModalPagamentoParcialPagar(conta) {
+                const old = document.getElementById('modal-pagamento-parcial');
+                if (old) old.remove();
+                const getHistorico = (it) => {
+                    if (!it) return [];
+                    if (Array.isArray(it.historicoPagamentos)) return it.historicoPagamentos;
+                    if (it.observacoes) {
+                        try {
+                            const obs = typeof it.observacoes === 'string' ? JSON.parse(it.observacoes) : it.observacoes;
+                            if (obs && Array.isArray(obs.historicoPagamentos)) return obs.historicoPagamentos;
+                        } catch (e) {}
+                    }
+                    return [];
+                };
+                const historico = getHistorico(conta);
+                const valorPago = (typeof conta.valorPago !== 'undefined' && conta.valorPago !== null)
+                    ? (Number(conta.valorPago) || 0)
+                    : historico.reduce((s, h) => s + Number(h.valor || 0), 0);
+                const valorRestante = Math.max(0, Number(conta.valor) - valorPago);
+                const quitado = (String(conta.status || '').toLowerCase() === 'pago' || valorRestante <= 0);
+
+                const modal = document.createElement('div');
+                modal.id = 'modal-pagamento-parcial';
+                modal.className = 'modal active';
+                modal.innerHTML = `
+                    <div class="modal-content" style="max-width: 360px;">
+                        <div class="modal-header">
+                            <h3>Pagamento Parcial</h3>
+                            <button class="close" onclick="document.getElementById('modal-pagamento-parcial').remove()">&times;</button>
+                        </div>
+                        <div class="modal-body">
+                            <p>Valor da conta: <strong>R$ ${Number(conta.valor).toFixed(2)}</strong></p>
+                            <p>Valor já pago: <strong>R$ ${valorPago.toFixed(2)}</strong></p>
+                            <p>Valor restante: <strong>R$ ${valorRestante.toFixed(2)}</strong></p>
+                            <div class="form-group">
+                                <label for="valor-pagamento-parcial">Valor a pagar agora</label>
+                                <input type="number" id="valor-pagamento-parcial" min="0.01" step="0.01" max="${valorRestante.toFixed(2)}" value="${quitado ? '' : valorRestante.toFixed(2)}" style="width:100%" ${quitado ? 'disabled placeholder="Quitada"' : ''} />
+                            </div>
+                            ${quitado ? '<div style="color:#28a745;font-weight:bold;margin-top:8px;">Conta já quitada</div>' : ''}
+                        </div>
+                        <div class="modal-footer">
+                            <button class="btn btn-secondary" onclick="document.getElementById('modal-pagamento-parcial').remove()">Cancelar</button>
+                            <button class="btn btn-success" onclick="ui.confirmarPagamentoParcialPagar('${conta.id}')" ${quitado ? 'disabled style="opacity:0.5;pointer-events:none;"' : ''}>Confirmar</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+            }
+
+            async confirmarPagamentoParcialPagar(id) {
+                try {
+                    const conta = await this.db.get('pagar', id);
+                    if (!conta) return;
+                    const input = document.getElementById('valor-pagamento-parcial');
+                    if (!input) return;
+
+                    const valorPagamento = Number(String(input.value || '').replace(',', '.'));
+                    if (isNaN(valorPagamento) || valorPagamento <= 0) {
+                        showToast('Valor inválido!', 'warning');
+                        return;
+                    }
+
+                    // Histórico (preferir campo direto; fallback para observações)
+                    let historico = [];
+                    if (Array.isArray(conta.historicoPagamentos)) {
+                        historico = conta.historicoPagamentos;
+                    } else if (conta.observacoes) {
+                        try {
+                            const obs = typeof conta.observacoes === 'string' ? JSON.parse(conta.observacoes) : conta.observacoes;
+                            if (obs && Array.isArray(obs.historicoPagamentos)) historico = obs.historicoPagamentos;
+                        } catch (e) { historico = []; }
+                    }
+
+                    const valorPago = historico.reduce((s, h) => s + Number(h.valor || 0), 0);
+                    const valorRestante = Math.max(0, Number(conta.valor) - valorPago);
+                    if (valorPagamento > valorRestante) {
+                        showToast('O valor pago não pode ser maior que o saldo da conta!', 'warning');
+                        return;
+                    }
+
+                    historico.push({ valor: valorPagamento, data: new Date().toISOString().split('T')[0] });
+                    conta.historicoPagamentos = historico;
+                    conta.valorPago = historico.reduce((s, h) => s + Number(h.valor || 0), 0);
+
+                    // Preservar possíveis observações texto, sem forçar JSON quando não for
+                    let obsObj = {};
+                    if (conta.observacoes && typeof conta.observacoes === 'string') {
+                        const obsStr = conta.observacoes.trim();
+                        if (obsStr && obsStr.startsWith('{') && obsStr.endsWith('}')) {
+                            try { obsObj = JSON.parse(obsStr); } catch (e) { obsObj = {}; }
+                        }
+                    } else if (conta.observacoes && typeof conta.observacoes === 'object') {
+                        obsObj = conta.observacoes;
+                    }
+                    conta.observacoes = JSON.stringify({ ...obsObj, historicoPagamentos: historico });
+
+                    if (conta.valorPago >= Number(conta.valor)) {
+                        conta.status = 'pago';
+                        conta.dataPagamento = new Date().toISOString().split('T')[0];
+                    } else {
+                        conta.status = 'parcial';
+                    }
+
+                    await this.db.put('pagar', conta);
+                    showToast('Pagamento parcial registrado!', 'success');
+                    document.getElementById('modal-pagamento-parcial')?.remove();
+                    this.carregarPagar();
+                    this.carregarDadosDashboard();
+                    try { filtrarPagar(); } catch(e) {}
+                } catch (e) {
+                    showToast('Erro ao registrar pagamento parcial', 'error');
+                    console.error(e);
+                }
+            }
+
             async marcarComoPagoPagar(id) {
                 try {
                     const duplicata = await this.db.get('pagar', id);
@@ -2930,20 +3412,125 @@
             }
 
             async deletarPagamento(id) {
-                if (!confirm('Tem certeza que deseja deletar este pagamento?')) {
-                    return;
-                }
-                
                 try {
-                    await this.db.delete('pagar', id);
-                    showToast('Pagamento deletado com sucesso!', 'success');
-                    this.carregarPagar();
-                    this.carregarDadosDashboard();
-                    hideModal('modal-visualizar-fornecedor');
-                    try { filtrarPagar(); } catch(e) { /* ignora se função não existir */ }
+                    const idNormalizado = this.db.normalizarId(id);
+
+                    if (!idNormalizado) {
+                        alert('ID inválido para exclusão.');
+                        return;
+                    }
+
+                    const confirmar = confirm('Deseja realmente deletar este lançamento?');
+                    if (!confirmar) return;
+
+                    const response = await fetch(`/api/financeiro/${idNormalizado}`, {
+                        method: 'DELETE',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        }
+                    });
+
+                    const resultado = await response.json().catch(() => ({}));
+
+                    if (!response.ok) {
+                        throw new Error(resultado.error || 'Erro ao deletar lançamento.');
+                    }
+
+                    // Limpar do localStorage também
+                    const receber = JSON.parse(localStorage.getItem(this.db.storageKeys.receber) || '[]');
+                    const pagar = JSON.parse(localStorage.getItem(this.db.storageKeys.pagar) || '[]');
+                    const syncQueue = JSON.parse(localStorage.getItem(this.db.storageKeys.syncQueue) || '[]');
+
+                    const novoReceber = receber.filter(item => !this.db.idsIguais(item.id, idNormalizado));
+                    const novoPagar = pagar.filter(item => !this.db.idsIguais(item.id, idNormalizado));
+
+                    // Remove também qualquer operação pendente relacionada ao mesmo ID
+                    const novaFila = syncQueue.filter(item => {
+                        if (!item) return false;
+                        const itemId = item.id || item.itemId || item.registroId || null;
+                        return !this.db.idsIguais(itemId, idNormalizado);
+                    });
+
+                    localStorage.setItem(this.db.storageKeys.receber, JSON.stringify(novoReceber));
+                    localStorage.setItem(this.db.storageKeys.pagar, JSON.stringify(novoPagar));
+                    localStorage.setItem(this.db.storageKeys.syncQueue, JSON.stringify(novaFila));
+
+                    alert('Lançamento apagado com sucesso.');
+
+                    // Fechar modais, se houver
+                    try {
+                        hideModal('modal-visualizar-fornecedor');
+                    } catch (e) {}
+
+                    try {
+                        hideModal('modal-resumo-parcela');
+                    } catch (e) {}
+
+                    // Recarrega a tela
+                    location.reload();
+
                 } catch (error) {
                     console.error('Erro ao deletar pagamento:', error);
-                    showToast('Erro ao deletar pagamento', 'error');
+                    alert(error.message || 'Não foi possível apagar o lançamento.');
+                }
+            }
+
+            async deletarDuplicataReceber() {
+                try {
+                    const dup = this.duplicataAtual;
+                    if (!dup || dup.id == null) {
+                        showToast('Nenhuma duplicata selecionada.', 'warning');
+                        return;
+                    }
+                    const idNormalizado = this.db.normalizarId(dup.id);
+                    if (!idNormalizado) {
+                        showToast('ID inválido para exclusão.', 'warning');
+                        return;
+                    }
+                    if (!/^\d+$/.test(String(idNormalizado))) {
+                        showToast('Só é possível excluir no servidor lançamentos com ID numérico (sincronizados).', 'warning');
+                        return;
+                    }
+
+                    if (!confirm('Deseja realmente excluir esta duplicata? Esta ação não pode ser desfeita.')) return;
+
+                    const pwd = await this.obterSenhaAdminSeNecessario();
+                    if (pwd === null) return;
+
+                    const headers = { 'Content-Type': 'application/json' };
+                    if (pwd) headers['x-admin-password'] = pwd;
+
+                    const response = await fetch(`/api/financeiro/${idNormalizado}`, {
+                        method: 'DELETE',
+                        credentials: 'include',
+                        headers
+                    });
+                    const resultado = await response.json().catch(() => ({}));
+                    if (!response.ok) {
+                        throw new Error(resultado.error || 'Erro ao excluir a duplicata.');
+                    }
+
+                    const receber = JSON.parse(localStorage.getItem(this.db.storageKeys.receber) || '[]');
+                    const pagar = JSON.parse(localStorage.getItem(this.db.storageKeys.pagar) || '[]');
+                    const syncQueue = JSON.parse(localStorage.getItem(this.db.storageKeys.syncQueue) || '[]');
+                    const novoReceber = receber.filter(item => !this.db.idsIguais(item.id, idNormalizado));
+                    const novaFila = syncQueue.filter(item => {
+                        if (!item) return false;
+                        const itemId = item.id || item.itemId || item.registroId || null;
+                        return !this.db.idsIguais(itemId, idNormalizado);
+                    });
+                    localStorage.setItem(this.db.storageKeys.receber, JSON.stringify(novoReceber));
+                    localStorage.setItem(this.db.storageKeys.pagar, JSON.stringify(pagar));
+                    localStorage.setItem(this.db.storageKeys.syncQueue, JSON.stringify(novaFila));
+
+                    this.duplicataAtual = null;
+                    hideModal('modal-visualizar-duplicata');
+                    showToast('Duplicata excluída com sucesso.', 'success');
+                    this.carregarReceber();
+                    this.carregarDadosDashboard();
+                } catch (error) {
+                    console.error('Erro ao excluir duplicata:', error);
+                    showToast(error.message || 'Não foi possível excluir a duplicata.', 'error');
                 }
             }
 
@@ -2990,8 +3577,22 @@
                     document.getElementById('vis-dup-descricao').innerText = duplicata.descricao || '';
                     document.getElementById('vis-dup-parcela').innerText = duplicata.parcela || '';
                     document.getElementById('vis-dup-vencimento').innerText = this.formatarData(duplicata.vencimento);
-                    document.getElementById('vis-dup-valor').innerText = this.formatarMoeda(Number(duplicata.valor || 0)) +
-                        (duplicata.valorPago ? `\nPago: R$ ${Number(duplicata.valorPago).toFixed(2)}\nRestante: R$ ${(Number(duplicata.valor) - Number(duplicata.valorPago)).toFixed(2)}` : '');
+
+                    const descontoDup = Number(duplicata.descontoAVista != null ? duplicata.descontoAVista : (duplicata.desconto != null ? duplicata.desconto : 0)) || 0;
+                    const valorLiq = Number(duplicata.valor || 0);
+                    let valorTotalDup = duplicata.valorBruto != null && duplicata.valorBruto !== ''
+                        ? Number(duplicata.valorBruto)
+                        : (valorLiq + descontoDup);
+                    if (Number.isNaN(valorTotalDup)) valorTotalDup = valorLiq + descontoDup;
+
+                    const fmtN = (v) => Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                    let blocoValores = `Valor total: ${fmtN(valorTotalDup)}<br>Desconto: ${fmtN(descontoDup)}<br>Valor Recebido: ${fmtN(valorLiq)}`;
+                    if (duplicata.valorPago) {
+                        blocoValores += `<br><br><span style="font-size:13px;color:#555">Pago: R$ ${Number(duplicata.valorPago).toFixed(2).replace('.', ',')}<br>Restante: R$ ${(Number(duplicata.valor) - Number(duplicata.valorPago)).toFixed(2).replace('.', ',')}</span>`;
+                    }
+                    const elBloco = document.getElementById('vis-dup-bloco-valores');
+                    if (elBloco) elBloco.innerHTML = blocoValores;
+
                     document.getElementById('vis-dup-status').innerHTML = this.criarBadgeStatus(duplicata);
 
                     // Exibir histórico de pagamentos se houver
@@ -3025,6 +3626,20 @@
                         }
                     } catch (e) { /* ignore */ }
 
+                    // Editar só para IDs sincronizados com o servidor (numéricos)
+                    try {
+                        const btnEd = document.getElementById('btn-editar-dup-visualizar');
+                        if (btnEd) {
+                            const canEdit = /^\d+$/.test(String(duplicata.id));
+                            btnEd.disabled = !canEdit;
+                            btnEd.style.opacity = canEdit ? '1' : '0.45';
+                            btnEd.style.cursor = canEdit ? 'pointer' : 'not-allowed';
+                            btnEd.title = canEdit
+                                ? 'Editar lançamento (senha do administrador)'
+                                : 'Edição no servidor só após sincronizar (ID numérico no banco)';
+                        }
+                    } catch (e) { /* ignore */ }
+
                     showModal('modal-visualizar-duplicata');
                 } catch (err) {
                     console.error('Erro ao abrir visualização da duplicata:', err);
@@ -3050,7 +3665,12 @@
                     document.getElementById('vis-forn-descricao').innerText = contaPagar.descricao || '';
                     document.getElementById('vis-forn-parcela').innerText = contaPagar.parcela || '1/1';
                     document.getElementById('vis-forn-vencimento').innerText = this.formatarData(contaPagar.vencimento);
-                    document.getElementById('vis-forn-valor').innerText = this.formatarMoeda(Number(contaPagar.valor || 0));
+                    {
+                        const valor = Number(contaPagar.valor || 0);
+                        const valorPago = Number(contaPagar.valorPago || 0) || (Array.isArray(contaPagar.historicoPagamentos) ? contaPagar.historicoPagamentos.reduce((s, h) => s + (Number(h.valor) || 0), 0) : 0);
+                        const restante = Math.max(0, valor - valorPago);
+                        document.getElementById('vis-forn-valor').innerText = this.formatarMoeda(valor) + (valorPago > 0 && restante > 0 ? `\nPago: ${this.formatarMoeda(valorPago)}\nRestante: ${this.formatarMoeda(restante)}` : '');
+                    }
                     document.getElementById('vis-forn-status').innerHTML = this.criarBadgeStatus(contaPagar);
 
                     // Mostrar campos de entrada e quantidade de parcelas se existirem
@@ -3081,12 +3701,15 @@
 
                     // Habilitar/desabilitar botão de marcar como pago
                     const btnMarcarPago = document.getElementById('btn-marcar-pago-forn');
+                    const btnParcial = document.getElementById('btn-pagamento-parcial-forn');
                     if (contaPagar.status === 'pago') {
                         btnMarcarPago.disabled = true;
                         btnMarcarPago.innerHTML = '✓ Já marcado como pago';
+                        if (btnParcial) btnParcial.disabled = true;
                     } else {
                         btnMarcarPago.disabled = false;
                         btnMarcarPago.innerHTML = 'Marcar como pago';
+                        if (btnParcial) btnParcial.disabled = false;
                     }
 
                     showModal('modal-visualizar-fornecedor');
@@ -3625,12 +4248,20 @@
                     
                 } else if (tipoPagamento === 'avista') {
                     // À vista
+                    const descontoAVista = Math.max(0, parseFloat((document.getElementById('desconto-avista-receber')?.value || '0').toString().replace(',', '.')) || 0);
+                    if (descontoAVista > valorTotal) {
+                        showToast('O desconto à vista não pode ser maior que o valor total.', 'warning');
+                        return [];
+                    }
+                    const valorComDesconto = Math.max(0, valorTotal - descontoAVista);
                     parcelas.push({
                         clienteId: this.clienteSelecionado.id,
                         cliente: this.clienteSelecionado.nome,
                         orcamentoId: this.orcamentoAtual.id,
                         descricao: `Orçamento ${this.orcamentoAtual.numero}`,
-                        valor: Number(valorTotal),
+                        valor: Number(valorComDesconto.toFixed(2)),
+                        valorBruto: Number(valorTotal.toFixed(2)),
+                        descontoAVista: Number(descontoAVista.toFixed(2)),
                         vencimento: new Date().toISOString().split('T')[0],
                         status: 'pago',
                         data: new Date().toISOString().split('T')[0],
@@ -3677,7 +4308,10 @@
                     let parcelas = this.gerarParcelasParaSalvar();
                     // Adiciona campo valorPago inicial 0 em cada parcela
                     if (parcelas && parcelas.length > 0) {
-                        parcelas = parcelas.map(p => ({...p, valorPago: 0}));
+                        parcelas = parcelas.map(p => ({
+                            ...p,
+                            valorPago: p.status === 'pago' ? Number(p.valor || 0) : 0
+                        }));
                     }
                     if (!parcelas || parcelas.length === 0) {
                         showToast('Nenhuma parcela gerada. Verifique os dados!', 'warning');
@@ -3714,13 +4348,23 @@
                     try {
                         const clienteTel = cliente.telefone || cliente.whatsapp;
                         if (clienteTel && parcelasSalvas.length > 0) {
-                            let msg = `Olá ${cliente.nome.split(' ')[0]}, segue o plano de pagamento para o orçamento ${this.orcamentoAtual.numero}:\n\n`;
+                            const ehAVista = parcelasSalvas.length === 1 && parcelasSalvas[0].tipo === 'avista';
+                            const primeiroNome = (cliente.nome || '').split(' ')[0] || 'Cliente';
+                            let msg = ehAVista
+                                ? `Recibo de pagamento - ${primeiroNome}\nOrçamento ${this.orcamentoAtual.numero}\n\n`
+                                : `Plano de pagamento - ${primeiroNome}\nOrçamento ${this.orcamentoAtual.numero}\n\n`;
                             
                             parcelasSalvas.forEach(p => {
                                 const venc = p.vencimento ? this.whatsappManager.formatarDataBR(p.vencimento) : '-';
                                 const status = p.status === 'pago' ? '(PAGO)' : '(A PAGAR)';
                                 msg += `• ${p.parcela} - Venc: ${venc} - Valor: R$ ${Number(p.valor).toFixed(2)} ${status}\n`;
                             });
+                            if (ehAVista) {
+                                const descontoAVista = Number(parcelasSalvas[0].descontoAVista || 0);
+                                if (descontoAVista > 0) {
+                                    msg += `\nDesconto à vista: R$ ${descontoAVista.toFixed(2)}\n`;
+                                }
+                            }
                             
                             const total = parcelasSalvas.reduce((sum, p) => sum + (p.valor || 0), 0);
                             msg += `\nTotal: R$ ${total.toFixed(2)}\n`;
@@ -4321,12 +4965,15 @@
         function mudarTipoPagamento() {
             const tipo = document.getElementById('tipo-pagamento').value;
             
+            document.getElementById('campos-avista').classList.add('hidden');
             document.getElementById('campos-parcelado').classList.add('hidden');
             document.getElementById('campos-entrada').classList.add('hidden');
             document.getElementById('tabela-parcelas').classList.add('hidden');
             document.getElementById('tabela-entrada-parcelas-receber').classList.add('hidden');
             
-            if (tipo === 'parcelado') {
+            if (tipo === 'avista') {
+                document.getElementById('campos-avista').classList.remove('hidden');
+            } else if (tipo === 'parcelado') {
                 document.getElementById('campos-parcelado').classList.remove('hidden');
                 ui.calcularParcelas();
             } else if (tipo === 'entrada') {
@@ -4612,7 +5259,8 @@
             window.cleanupFinanceiroTipo = tipo;
             
             // Limpar os campos
-            document.getElementById('cleanup-before-date').value = '';
+            document.getElementById('cleanup-start-date').value = '';
+            document.getElementById('cleanup-end-date').value = '';
             document.getElementById('cleanup-admin-pass').value = '';
             document.getElementById('cleanup-confirm').value = '';
             
@@ -4648,7 +5296,8 @@
             document.querySelector('#modal-cleanup-financeiro .modal-header h3').textContent = `Limpar registros antigos (${titulo})`;
             
             // Limpar os campos
-            document.getElementById('cleanup-before-date').value = '';
+            document.getElementById('cleanup-start-date').value = '';
+            document.getElementById('cleanup-end-date').value = '';
             document.getElementById('cleanup-admin-pass').value = '';
             document.getElementById('cleanup-confirm').value = '';
             
@@ -4666,13 +5315,18 @@
 
         async function executarCleanupFinanceiro() {
             try {
-                const beforeDate = document.getElementById('cleanup-before-date').value;
+                const startDate = document.getElementById('cleanup-start-date').value;
+                const endDate = document.getElementById('cleanup-end-date').value;
                 const pass = document.getElementById('cleanup-admin-pass').value;
                 const confirmText = document.getElementById('cleanup-confirm').value;
                 const tipo = window.cleanupFinanceiroTipo || 'ambos';
 
-                if (!beforeDate) {
-                    showToast('Informe a data limite (antes de)...', 'warning');
+                if (!startDate || !endDate) {
+                    showToast('Informe o período completo (data inicial e final).', 'warning');
+                    return;
+                }
+                if (startDate > endDate) {
+                    showToast('A data inicial não pode ser maior que a data final.', 'warning');
                     return;
                 }
                 if ((confirmText || '').trim().toUpperCase() !== 'DELETE') {
@@ -4692,7 +5346,7 @@
                 const resp = await fetch('/api/financeiro/cleanup', {
                     method: 'POST',
                     headers,
-                    body: JSON.stringify({ beforeDate, confirm: true, tipo })
+                    body: JSON.stringify({ startDate, endDate, confirm: true, tipo })
                 });
 
                 const data = await resp.json();
@@ -4731,13 +5385,14 @@
                             const todosPagar = await ui.db.getAll('pagar');
                             for (const p of todosPagar) if (p && removedIds.includes(String(p.id))) await ui.db.delete('pagar', p.id);
                         } else {
-                            // Fallback: remover por data (comportamento anterior)
-                            const before = new Date(beforeDate);
+                            // Fallback: remover por período
+                            const inicio = new Date(startDate);
+                            const fim = new Date(endDate);
                             // Receber
                             const todosReceber = await ui.db.getAll('receber');
                             for (const r of todosReceber) {
                                 const venc = r.vencimento ? new Date(r.vencimento) : null;
-                                if (venc && venc < before) {
+                                if (venc && venc >= inicio && venc <= fim) {
                                     await ui.db.delete('receber', r.id);
                                 }
                             }
@@ -4745,7 +5400,7 @@
                             const todosPagar = await ui.db.getAll('pagar');
                             for (const p of todosPagar) {
                                 const venc2 = p.vencimento ? new Date(p.vencimento) : null;
-                                if (venc2 && venc2 < before) {
+                                if (venc2 && venc2 >= inicio && venc2 <= fim) {
                                     await ui.db.delete('pagar', p.id);
                                 }
                             }
@@ -5316,6 +5971,19 @@
                         const s = st.toString().toLowerCase();
                         return s === 'pago' || s === 'paid' || it.pago === true || it.confirmado === 1 || it.confirmado === '1' || it.dataPagamento || it.data_pagamento || it.confirmadoEm || it.confirmado_em;
                     };
+                    const getValorPago = (it) => {
+                        if (!it) return 0;
+                        if (typeof it.valorPago !== 'undefined' && it.valorPago !== null) return Number(it.valorPago) || 0;
+                        if (Array.isArray(it.historicoPagamentos)) return it.historicoPagamentos.reduce((s, h) => s + (Number(h.valor) || 0), 0);
+                        if (it.observacoes) {
+                            try {
+                                const obs = typeof it.observacoes === 'string' ? JSON.parse(it.observacoes) : it.observacoes;
+                                if (obs && Array.isArray(obs.historicoPagamentos)) return obs.historicoPagamentos.reduce((s, h) => s + (Number(h.valor) || 0), 0);
+                            } catch (e) {}
+                        }
+                        return 0;
+                    };
+                    const saldoRestante = (it) => Math.max(0, (Number(it?.valor) || 0) - getValorPago(it));
                     // Nome dos meses em português
                     const meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
                     // Pega mês/ano filtrado, ou atual se não filtrado
@@ -5335,8 +6003,10 @@
                         anoResumo = dataAtual.getFullYear();
                     }
 
-                    // O total a pagar deve ser a soma dos itens exibidos na tabela (filtrados)
-                    const totalPagarFiltrado = filtrados.reduce((sum, p) => sum + (Number(p.valor) || 0), 0);
+                    // Total a pagar = saldo restante dos itens NÃO pagos (considera parciais)
+                    const totalPagarFiltrado = filtrados
+                        .filter(p => !isPaid(p))
+                        .reduce((sum, p) => sum + saldoRestante(p), 0);
 
                     // Atualizar label do mês
                     const labelTotalPagar = document.getElementById('label-total-pagar');
@@ -5358,14 +6028,15 @@
                         .filter(p => {
                             // Considera apenas status aberto, pendente, atrasado ou parcelado
                             const st = (p.status || '').toLowerCase();
-                            if (!(st === 'aberto' || st === 'pendente' || st === 'atrasado' || st === 'parcelado')) return false;
+                            if (!(st === 'aberto' || st === 'pendente' || st === 'atrasado' || st === 'parcelado' || st === 'parcial')) return false;
                             const v = parseDateLocal(p.vencimento || p.data || p.created_at || p.createdAt || p.criado_em);
                             if (!v) return false;
                             if (filtroMesVal && (v.getMonth()+1) !== Number(filtroMesVal)) return false;
                             if (filtroAnoVal && v.getFullYear() !== Number(filtroAnoVal)) return false;
                             return v < hojeZero;
                         })
-                        .reduce((s, p) => s + (Number(p.valor) || 0), 0);
+                        .filter(p => !isPaid(p))
+                        .reduce((s, p) => s + saldoRestante(p), 0);
 
                         // Exibir ou esconder o card de vencidos
                         const cardVencido = document.getElementById('card-total-pagar-vencido');
@@ -5553,6 +6224,8 @@
                             const hojeZero = new Date(new Date().toISOString().split('T')[0] + 'T00:00:00');
                             if (!(venc < hojeZero)) return false;
                             if (st === 'pago') return false;
+                        } else if (s === 'parcial') {
+                            if (!(st === 'parcial')) return false;
                         } else if (s === 'aberto') {
                             if (!(st === 'aberto' || st === 'pendente' || st === 'em aberto')) return false;
                         } else {
@@ -5574,6 +6247,10 @@
 
                 // Construir HTML do relatório
                 const container = document.getElementById(containerId);
+                if (!container) {
+                    showToast('Área de relatório não encontrada', 'error');
+                    return;
+                }
                 let html = '';
 
                 html += `
@@ -5674,7 +6351,54 @@
         }
 
         function imprimirRelatorio() {
-            const content = document.getElementById('tabela-relatorio').innerHTML;
+            const temRelatorioReal = (html) => {
+                let s = html || '';
+                const cOpen = String.fromCharCode(60);
+                const cBang = String.fromCharCode(33);
+                const cGt = String.fromCharCode(62);
+                const marcadorFim = '--' + cGt;
+                let pos = s.indexOf(cOpen + cBang + '--');
+                while (pos !== -1) {
+                    const fim = s.indexOf(marcadorFim, pos);
+                    if (fim === -1) break;
+                    s = s.slice(0, pos) + s.slice(fim + marcadorFim.length);
+                    pos = s.indexOf(cOpen + cBang + '--');
+                }
+                s = s.trim();
+                if (!s.length) return false;
+                const temTabela = s.toLowerCase().indexOf(cOpen + 'table') !== -1;
+                const temLinha = s.toLowerCase().indexOf(cOpen + 'tr') !== -1;
+                return temTabela || temLinha;
+            };
+
+            const pickContent = () => {
+                const porAba = [
+                    { tabId: 'rel-duplicatas', elId: 'tabela-relatorio' },
+                    { tabId: 'rel-pagar', elId: 'tabela-relatorio-pagar' },
+                    { tabId: 'rel-inadimplencia', elId: 'tabela-relatorio-inadimplencia' }
+                ];
+                for (const { tabId, elId } of porAba) {
+                    const tab = document.getElementById(tabId);
+                    if (tab && tab.classList.contains('active')) {
+                        const el = document.getElementById(elId);
+                        const html = el ? (el.innerHTML || '') : '';
+                        if (temRelatorioReal(html)) return html;
+                    }
+                }
+                const ids = ['tabela-relatorio', 'tabela-relatorio-pagar', 'tabela-relatorio-inadimplencia'];
+                for (const id of ids) {
+                    const el = document.getElementById(id);
+                    const html = el ? (el.innerHTML || '') : '';
+                    if (temRelatorioReal(html)) return html;
+                }
+                return '';
+            };
+
+            const content = pickContent();
+            if (!content) {
+                showToast('Gere o relatório nesta aba e clique em Imprimir de novo', 'warning');
+                return;
+            }
             const estilo = `
                 <style>
                     body { font-family: Arial, sans-serif; padding: 20px; }
@@ -5683,12 +6407,41 @@
                     .data-table thead { background: #f8f9fa; }
                 </style>
             `;
-            const win = window.open('', '_blank');
-            win.document.write(`<html><head><title>Relatório</title>${estilo}</head><body>${content}</body></html>`);
-            win.document.close();
-            win.focus();
-            // Aguardar um pouco para garantir que o conteúdo foi carregado
-            setTimeout(() => { win.print(); }, 300);
+            const docHtml = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Relatório</title>${estilo}</head><body>${content}</body></html>`;
+
+            const win = window.open('', '_blank', 'noopener,noreferrer');
+            if (win && win.document) {
+                win.document.open();
+                win.document.write(docHtml);
+                win.document.close();
+                win.focus();
+                setTimeout(() => {
+                    try { win.print(); } catch (e) { console.warn(e); }
+                }, 400);
+                return;
+            }
+
+            let iframe = document.getElementById('iframe-imprimir-relatorio');
+            if (!iframe) {
+                iframe = document.createElement('iframe');
+                iframe.id = 'iframe-imprimir-relatorio';
+                iframe.setAttribute('aria-hidden', 'true');
+                iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+                document.body.appendChild(iframe);
+            }
+            const idoc = iframe.contentDocument || iframe.contentWindow.document;
+            idoc.open();
+            idoc.write(docHtml);
+            idoc.close();
+            setTimeout(() => {
+                try {
+                    iframe.contentWindow.focus();
+                    iframe.contentWindow.print();
+                } catch (e) {
+                    console.warn(e);
+                    showToast('Não foi possível abrir a impressão. Permita pop-ups ou use Ctrl+P nesta tela', 'error');
+                }
+            }, 400);
         }
 
         // Inicializar sync status

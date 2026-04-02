@@ -1,21 +1,47 @@
 {
   "name": "negocar-system",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Sistema de gerenciamento para oficinas",
-  "main": "server.js",
+  "main": "main.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js"
+    "start": "electron .",
+    "build": "electron-builder"
+  },
+  "build": {
+    "appId": "com.negocar.system",
+    "productName": "NegoCar Sistema",
+    "npmRebuild": false,
+    "asarUnpack": [
+      "**/*.node"
+    ],
+    "extraResources": [
+      {
+        "from": "database.db",
+        "to": "database.db"
+      }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "public/imagem/icon.ico"
+    },
+    "nsis": {
+      "installerIcon": "public/imagem/icon.ico",
+      "uninstallerIcon": "public/imagem/icon.ico",
+      "installerHeaderIcon": "public/imagem/icon.ico"
+    }
   },
   "dependencies": {
     "body-parser": "^1.19.0",
     "cors": "^2.8.5",
     "express": "^4.17.1",
+    "googleapis": "^144.0.0",
     "node-fetch": "^3.3.2",
     "sqlite3": "^5.1.7"
   },
   "devDependencies": {
-    "electron": "^40.6.1",
+    "@electron/rebuild": "^4.0.3",
+    "electron": "^40.8.4",
+    "electron-builder": "^26.8.1",
     "nodemon": "^2.0.15"
   }
 }

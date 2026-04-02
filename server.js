@@ -1,13 +1,14 @@
 const express = require('express');
 const cors = require('cors');
-const bodyParser = require('body-parser');
 const path = require('path');
-const sqlite3 = require('sqlite3').verbose();
 const fs = require('fs');
+const { app: electronApp } = require('electron');
+const sqlite3 = require('sqlite3').verbose();
 const crypto = require('crypto');
 
 const app = express();
-const port = 3000;
+
+const PORT = Number(process.env.PORT) || 3000;
 
 // In-memory store for admin tokens (simple implementation)
 const adminTokens = new Set();
@@ -61,6 +62,14 @@ const CLEANUP_MODULES = {
 };
 
 // Middlewares
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // Proxy para ViaCEP para evitar CORS no frontend (Node 18+ já tem fetch nativo)
 app.get('/api/cep/:cep', async (req, res) => {
     const cep = req.params.cep.replace(/\D/g, '');
@@ -85,9 +94,6 @@ app.get('/api/cep/:cep', async (req, res) => {
     }
 });
 app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));
-app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
-app.use(express.static('public'));
 
 // Content Security Policy: permitir apenas origens necessárias (ajuste conforme ambiente)
 app.use((req, res, next) => {
@@ -106,14 +112,36 @@ app.use((req, res, next) => {
 });
 
 // Configuração do banco de dados SQLite local
-const dbPath = path.join(__dirname, 'database.db');
-const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
-    if (err) {
-        console.error('Erro ao conectar ao banco de dados:', err.message);
-    } else {
-        console.log('Conectado ao banco de dados SQLite local em:', dbPath);
-        inicializarBanco();
-    }
+const userDataPath = electronApp.getPath('userData');
+const dbPath = path.join(userDataPath, 'database.db');
+
+const packagedDbPath = path.join(process.resourcesPath, 'database.db');
+const devDbPath = path.join(__dirname, 'database.db');
+
+// cria a pasta do usuário se não existir
+if (!fs.existsSync(userDataPath)) {
+  fs.mkdirSync(userDataPath, { recursive: true });
+}
+
+// se o banco ainda não existir na pasta do usuário, copia o banco inicial
+if (!fs.existsSync(dbPath)) {
+  if (fs.existsSync(packagedDbPath)) {
+    fs.copyFileSync(packagedDbPath, dbPath);
+    console.log('Banco copiado de resources para:', dbPath);
+  } else if (fs.existsSync(devDbPath)) {
+    fs.copyFileSync(devDbPath, dbPath);
+    console.log('Banco copiado da raiz do projeto para:', dbPath);
+  } else {
+    console.error('Nenhum database.db encontrado para copiar.');
+  }
+}
+
+const db = new sqlite3.Database(dbPath, (err) => {
+  if (err) {
+    console.error('Erro ao abrir banco:', err.message);
+  } else {
+    console.log('Banco aberto em:', dbPath);
+  }
 });
 
 // Evitar que a conexão feche antes de usar
@@ -269,6 +297,7 @@ function inicializarBanco() {
             'ALTER TABLE transacoes ADD COLUMN grupo_parcelamento_id TEXT',
             'ALTER TABLE transacoes ADD COLUMN updated_at DATETIME'
             , 'ALTER TABLE transacoes ADD COLUMN fornecedor TEXT'
+            , 'ALTER TABLE transacoes ADD COLUMN desconto REAL'
         ];
 
         transacaoColumnsToAdd.forEach(sql => {
@@ -594,6 +623,87 @@ app.get('/api/transacoes', (req, res) => {
     });
 });
 
+// =========================
+// FINANCEIRO
+// =========================
+
+// Listar lançamentos financeiros
+app.get('/api/financeiro', (req, res) => {
+    db.all('SELECT * FROM transacoes ORDER BY data DESC, id DESC', [], (err, rows) => {
+        if (err) {
+            console.error('Erro ao listar financeiro:', err.message);
+            return res.status(500).json({ error: err.message });
+        }
+
+        const dados = rows.map(row => {
+            const n = normalizeTransacao(row);
+
+            return {
+                ...n,
+                id: String(row.id),
+                orcamentoId: row.orcamento_id || row.orcamentoId || null,
+                clienteId: row.cliente_id || row.clienteId || null,
+                categoriaId: row.categoria_id || row.categoriaId || null,
+                parcelaDe: row.parcela_de || row.parcelaDe || null,
+                numeroParcela: row.numero_parcela || row.numeroParcela || null,
+                totalParcelas: row.total_parcelas || row.totalParcelas || null,
+                isDuplicata: row.is_duplicata === 1 || row.isDuplicata === true,
+                numeroDuplicata: row.numero_duplicata || row.numeroDuplicata || null,
+                formaPagamento: row.forma_pagamento || row.formaPagamento || null,
+                numParcelas: row.num_parcelas || row.numParcelas || null,
+                confirmadoEm: row.confirmado_em || row.confirmadoEm || null,
+                criadoEm: row.criado_em || row.criadoEm || null,
+                fornecedor: row.fornecedor || null,
+                desconto: row.desconto != null && row.desconto !== '' ? Number(row.desconto) : null,
+                descontoAVista: row.desconto != null && row.desconto !== '' ? Number(row.desconto) : null
+            };
+        });
+
+        res.json(dados);
+    });
+});
+
+// Deletar lançamento financeiro por ID (contas a receber: exige senha admin ou sessão admin)
+app.delete('/api/financeiro/:id', (req, res) => {
+    const { id } = req.params;
+
+    if (!id) {
+        return res.status(400).json({ error: 'ID inválido' });
+    }
+
+    db.get('SELECT * FROM transacoes WHERE id = ?', [id], (getErr, row) => {
+        if (getErr) {
+            console.error('Erro ao buscar lançamento:', getErr.message);
+            return res.status(500).json({ error: getErr.message });
+        }
+        if (!row) {
+            return res.status(404).json({ error: 'Registro não encontrado' });
+        }
+
+        const tipoRow = (row.tipo || '').toLowerCase();
+        if (tipoRow === 'receber' && !verifyAdminPasswordOrCookie(req)) {
+            return res.status(403).json({ error: 'É necessária a senha do administrador para excluir contas a receber.' });
+        }
+
+        db.run('DELETE FROM transacoes WHERE id = ?', [id], function(err) {
+            if (err) {
+                console.error('Erro ao deletar lançamento:', err.message);
+                return res.status(500).json({ error: err.message });
+            }
+
+            if (this.changes === 0) {
+                return res.status(404).json({ error: 'Registro não encontrado' });
+            }
+
+            res.json({
+                success: true,
+                message: 'Lançamento deletado com sucesso',
+                deletedId: String(id)
+            });
+        });
+    });
+});
+
 app.get('/api/usuarios', (req, res) => {
     db.all('SELECT * FROM usuarios', [], (err, rows) => {
         if (err) {
@@ -679,16 +789,22 @@ app.delete('/api/storage', (req, res) => {
 
 // (Removidos handlers duplicados de lista/exclusão de limpeza — versão consolidada mantida mais abaixo)
 
-// Endpoint seguro para limpar registros antigos do módulo financeiro
+// Endpoint seguro para limpar registros do módulo financeiro por período
 // Requisitos de segurança:
-// - body.beforeDate (YYYY-MM-DD) obrigatório
+// - body.startDate e body.endDate (YYYY-MM-DD) obrigatórios
 // - body.confirm === true
 // - Se variável de ambiente ADMIN_PASSWORD definida, header 'x-admin-password' deve corresponder
 app.post('/api/financeiro/cleanup', (req, res) => {
-    const { beforeDate, confirm, tipo } = req.body || {};
+    const { startDate, endDate, beforeDate, confirm, tipo } = req.body || {};
+    const inicio = startDate || beforeDate;
+    const fim = endDate || beforeDate;
 
-    if (!beforeDate) {
-        res.status(400).json({ error: 'beforeDate é obrigatório (YYYY-MM-DD)' });
+    if (!inicio || !fim) {
+        res.status(400).json({ error: 'startDate e endDate são obrigatórios (YYYY-MM-DD)' });
+        return;
+    }
+    if (inicio > fim) {
+        res.status(400).json({ error: 'startDate não pode ser maior que endDate' });
         return;
     }
     if (!confirm) {
@@ -712,8 +828,8 @@ app.post('/api/financeiro/cleanup', (req, res) => {
     }
 
     // Construir cláusula WHERE para filtrar por tipo se especificado
-    let whereClause = '(vencimento IS NOT NULL AND vencimento <= ?) OR (data IS NOT NULL AND data <= ?)';
-    let params = [beforeDate, beforeDate];
+    let whereClause = '((vencimento IS NOT NULL AND vencimento >= ? AND vencimento <= ?) OR (data IS NOT NULL AND data >= ? AND data <= ?))';
+    let params = [inicio, fim, inicio, fim];
     
     if (tipo && (tipo === 'receber' || tipo === 'pagar')) {
         whereClause += ` AND tipo = ?`;
@@ -729,16 +845,18 @@ app.post('/api/financeiro/cleanup', (req, res) => {
         }
 
         if (!rows || rows.length === 0) {
-            res.json({ deleted: 0, backup: null, message: 'Nenhum registro encontrado antes da data informada' });
+            res.json({ deleted: 0, backup: null, message: 'Nenhum registro encontrado no período informado' });
             return;
         }
 
         // Garantir diretório de backup
-        const backupsDir = path.join(__dirname, 'backups');
+        const backupsDir = path.join(userDataPath, 'backups');
         try {
-            if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir);
+            if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
         } catch (mkdirErr) {
             console.error('Erro ao criar pasta de backups:', mkdirErr.message);
+            res.status(500).json({ error: 'Erro ao preparar pasta de backup: ' + mkdirErr.message });
+            return;
         }
 
         const tipoLabel = tipo === 'receber' ? 'receber' : (tipo === 'pagar' ? 'pagar' : 'misto');
@@ -755,7 +873,7 @@ app.post('/api/financeiro/cleanup', (req, res) => {
         // Fazer remoção segura por ids
         const ids = rows.map(r => r.id).filter(Boolean);
         if (ids.length === 0) {
-            res.json({ deleted: 0, backup: path.relative(__dirname, backupPath), removedItems: [] });
+            res.json({ deleted: 0, backup: backupPath, removedItems: [] });
             return;
         }
 
@@ -768,7 +886,7 @@ app.post('/api/financeiro/cleanup', (req, res) => {
             }
 
             const removedItems = rows.map(r => ({ id: r.id ? String(r.id) : null, tipo: r.tipo || null }));
-            res.json({ deleted: this.changes, backup: path.relative(__dirname, backupPath), removedIds: ids, removedItems });
+            res.json({ deleted: this.changes, backup: backupPath, removedIds: ids, removedItems });
         });
     });
 });
@@ -810,6 +928,280 @@ app.get('/api/admin/status', (req, res) => {
     const cookieToken = (cookieHeader.match(/(?:^|; )admin_token=([^;]+)/) || [])[1];
     const isAdmin = cookieToken && adminTokens.has(cookieToken);
     res.json({ isAdmin: !!isAdmin });
+});
+
+// --- Backup Google Drive: configuração só admin; envio do backup qualquer usuário do app ---
+const driveOAuthPending = new Map();
+
+function getAdminCookieToken(req) {
+    const cookieHeader = req.headers.cookie || '';
+    const m = cookieHeader.match(/(?:^|; )admin_token=([^;]+)/);
+    return m ? decodeURIComponent(m[1].trim()) : null;
+}
+
+function isAdminRequest(req) {
+    const t = getAdminCookieToken(req);
+    return !!(t && adminTokens.has(t));
+}
+
+function requireAdminJson(req, res) {
+    if (!isAdminRequest(req)) {
+        res.status(403).json({ error: 'Apenas o administrador pode acessar esta função.' });
+        return false;
+    }
+    return true;
+}
+
+/** Senha admin (header x-admin-password), variável ADMIN_PASSWORD ou sessão admin (cookie). */
+function verifyAdminPasswordOrCookie(req) {
+    const adminPassEnv = process.env.ADMIN_PASSWORD;
+    const provided = req.headers['x-admin-password'];
+    const cookieHeader = req.headers.cookie || '';
+    const cookieToken = (cookieHeader.match(/(?:^|; )admin_token=([^;]+)/) || [])[1];
+    if (cookieToken && adminTokens.has(decodeURIComponent(cookieToken.trim()))) return true;
+    if (adminPassEnv && provided && provided === adminPassEnv) return true;
+    if (provided && provided === ADMIN_PASSWORD_HARDCODED) return true;
+    return false;
+}
+
+function mergeFinanceiroUpdate(entrada, row) {
+    const status = entrada.status !== undefined ? entrada.status : row.status;
+    const descricao = entrada.descricao !== undefined ? entrada.descricao : (row.descricao || '');
+    const observacoes = entrada.observacoes !== undefined ? entrada.observacoes : (row.observacoes || '');
+    const dataPagamento = entrada.dataPagamento !== undefined ? entrada.dataPagamento : row.data_pagamento;
+    const fornecedor = entrada.fornecedor !== undefined
+        ? entrada.fornecedor
+        : (entrada.fornecedorNome !== undefined ? entrada.fornecedorNome : row.fornecedor);
+    const grupoParcelamentoId = entrada.grupoParcelamentoId !== undefined ? entrada.grupoParcelamentoId : row.grupo_parcelamento_id;
+    const valor = entrada.valor !== undefined && entrada.valor !== null && entrada.valor !== ''
+        ? Number(entrada.valor)
+        : row.valor;
+    const vencimento = entrada.vencimento !== undefined ? entrada.vencimento : row.vencimento;
+    const data = entrada.data !== undefined ? entrada.data : row.data;
+    let desconto;
+    if (entrada.desconto !== undefined && entrada.desconto !== null && entrada.desconto !== '') {
+        desconto = Number(entrada.desconto);
+    } else if (entrada.descontoAVista !== undefined && entrada.descontoAVista !== null && entrada.descontoAVista !== '') {
+        desconto = Number(entrada.descontoAVista);
+    } else if (row.desconto != null && row.desconto !== '') {
+        desconto = Number(row.desconto);
+    } else {
+        desconto = 0;
+    }
+    if (Number.isNaN(desconto)) desconto = 0;
+    return {
+        status: status || 'aberto',
+        descricao,
+        observacoes,
+        dataPagamento,
+        fornecedor,
+        grupoParcelamentoId,
+        valor,
+        vencimento,
+        data,
+        desconto
+    };
+}
+
+const backupDriveConfigPath = path.join(userDataPath, 'google-drive-backup.json');
+
+function parseDriveFolderId(input) {
+    if (!input) return '';
+    const s = String(input).trim();
+    const m = s.match(/\/folders\/([a-zA-Z0-9_-]+)/);
+    if (m) return m[1];
+    return s;
+}
+
+function loadBackupDriveConfig() {
+    try {
+        if (!fs.existsSync(backupDriveConfigPath)) return null;
+        return JSON.parse(fs.readFileSync(backupDriveConfigPath, 'utf8'));
+    } catch (e) {
+        return null;
+    }
+}
+
+function saveBackupDriveConfig(obj) {
+    fs.writeFileSync(backupDriveConfigPath, JSON.stringify(obj, null, 2), 'utf8');
+}
+
+// Escopo amplo para permitir envio a uma pasta específica do Drive (uso interno / admin confia)
+const DRIVE_BACKUP_SCOPES = ['https://www.googleapis.com/auth/drive'];
+
+setInterval(() => {
+    const now = Date.now();
+    for (const [st, data] of driveOAuthPending.entries()) {
+        if (data && data.expires < now) driveOAuthPending.delete(st);
+    }
+}, 5 * 60 * 1000);
+
+app.get('/api/backup/drive/status', (req, res) => {
+    const c = loadBackupDriveConfig();
+    const configured = !!(c && c.refreshToken && c.clientId && c.clientSecret);
+    res.json({ configured });
+});
+
+app.post('/api/backup/drive', async (req, res) => {
+    const c = loadBackupDriveConfig();
+    if (!c || !c.refreshToken || !c.clientId || !c.clientSecret) {
+        res.status(400).json({ error: 'Backup Google Drive não configurado. Peça ao administrador para configurar em Configurações.' });
+        return;
+    }
+    const tmpName = `database-backup-${Date.now()}.db`;
+    const tmpPath = path.join(userDataPath, tmpName);
+    try {
+        fs.copyFileSync(dbPath, tmpPath);
+    } catch (e) {
+        res.status(500).json({ error: 'Não foi possível copiar o banco de dados: ' + e.message });
+        return;
+    }
+    let uploaded;
+    try {
+        const { google } = require('googleapis');
+        const redirectUri = `http://127.0.0.1:${PORT}/api/oauth/google-drive/callback`;
+        const oauth2Client = new google.auth.OAuth2(c.clientId, c.clientSecret, redirectUri);
+        oauth2Client.setCredentials({ refresh_token: c.refreshToken });
+        const drive = google.drive({ version: 'v3', auth: oauth2Client });
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const fileName = `negocar-database-${stamp}.db`;
+        const requestBody = { name: fileName };
+        if (c.folderId) requestBody.parents = [c.folderId];
+        const resp = await drive.files.create({
+            requestBody,
+            media: {
+                mimeType: 'application/octet-stream',
+                body: fs.createReadStream(tmpPath)
+            },
+            fields: 'id,name,webViewLink'
+        });
+        uploaded = resp.data;
+    } catch (err) {
+        console.error('Backup Drive:', err);
+        try { fs.unlinkSync(tmpPath); } catch (_) { /* ignore */ }
+        res.status(500).json({ error: (err && err.message) ? err.message : 'Falha ao enviar para o Google Drive' });
+        return;
+    }
+    try { fs.unlinkSync(tmpPath); } catch (_) { /* ignore */ }
+    res.json({
+        success: true,
+        fileName: uploaded.name,
+        id: uploaded.id,
+        webViewLink: uploaded.webViewLink || null
+    });
+});
+
+app.get('/api/admin/backup-drive/config', (req, res) => {
+    if (!requireAdminJson(req, res)) return;
+    const c = loadBackupDriveConfig();
+    if (!c) {
+        res.json({ configured: false, folderId: '', clientIdPreview: '', hasRefreshToken: false });
+        return;
+    }
+    const cid = c.clientId || '';
+    const prev = cid.length > 8 ? cid.slice(0, 4) + '…' + cid.slice(-4) : cid;
+    res.json({
+        configured: !!(c.refreshToken && c.clientId && c.clientSecret),
+        folderId: c.folderId || '',
+        clientIdPreview: prev,
+        hasRefreshToken: !!c.refreshToken
+    });
+});
+
+app.post('/api/admin/backup-drive/config', express.json(), (req, res) => {
+    if (!requireAdminJson(req, res)) return;
+    const { clientId, clientSecret, refreshToken, folderId } = req.body || {};
+    if (!clientId || !clientSecret || !refreshToken) {
+        res.status(400).json({ error: 'Informe Client ID, Client Secret e Refresh Token.' });
+        return;
+    }
+    const existing = loadBackupDriveConfig() || {};
+    saveBackupDriveConfig({
+        ...existing,
+        clientId: String(clientId).trim(),
+        clientSecret: String(clientSecret).trim(),
+        refreshToken: String(refreshToken).trim(),
+        folderId: folderId ? parseDriveFolderId(folderId) : ''
+    });
+    res.json({ success: true });
+});
+
+app.post('/api/admin/backup-drive/oauth-url', express.json(), (req, res) => {
+    if (!requireAdminJson(req, res)) return;
+    const { clientId, clientSecret, folderId } = req.body || {};
+    if (!clientId || !clientSecret) {
+        res.status(400).json({ error: 'Informe Client ID e Client Secret (Google Cloud Console).' });
+        return;
+    }
+    const state = crypto.randomBytes(24).toString('hex');
+    const redirectUri = `http://127.0.0.1:${PORT}/api/oauth/google-drive/callback`;
+    driveOAuthPending.set(state, {
+        clientId: String(clientId).trim(),
+        clientSecret: String(clientSecret).trim(),
+        folderId: folderId ? parseDriveFolderId(folderId) : '',
+        expires: Date.now() + 15 * 60 * 1000
+    });
+    const params = new URLSearchParams({
+        client_id: String(clientId).trim(),
+        redirect_uri: redirectUri,
+        response_type: 'code',
+        scope: DRIVE_BACKUP_SCOPES.join(' '),
+        access_type: 'offline',
+        prompt: 'consent',
+        state
+    });
+    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+    res.json({ authUrl, redirectUri });
+});
+
+app.get('/api/oauth/google-drive/callback', async (req, res) => {
+    const { code, state, error } = req.query;
+    if (error) {
+        res.status(400).send(`<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><p>Erro Google: ${String(error)}</p></body></html>`);
+        return;
+    }
+    if (!code || !state) {
+        res.status(400).send('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><p>Resposta inválida.</p></body></html>');
+        return;
+    }
+    const pending = driveOAuthPending.get(String(state));
+    if (!pending || pending.expires < Date.now()) {
+        res.status(400).send('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><p>Link expirado. Gere um novo em Configurações → Backup Google Drive.</p></body></html>');
+        return;
+    }
+    driveOAuthPending.delete(String(state));
+    const redirectUri = `http://127.0.0.1:${PORT}/api/oauth/google-drive/callback`;
+    try {
+        const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                code: String(code),
+                client_id: pending.clientId,
+                client_secret: pending.clientSecret,
+                redirect_uri: redirectUri,
+                grant_type: 'authorization_code'
+            })
+        });
+        const tokens = await tokenRes.json();
+        if (!tokenRes.ok || !tokens.refresh_token) {
+            console.error('Google token response:', tokens);
+            res.status(400).send('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><p>Não foi possível obter o <strong>refresh token</strong>. Remova o acesso do app em <a href="https://myaccount.google.com/permissions">minha conta Google</a> e tente de novo, ou use o campo manual de Refresh Token nas configurações.</p></body></html>');
+            return;
+        }
+        const existing = loadBackupDriveConfig() || {};
+        saveBackupDriveConfig({
+            ...existing,
+            clientId: pending.clientId,
+            clientSecret: pending.clientSecret,
+            refreshToken: tokens.refresh_token,
+            folderId: pending.folderId || existing.folderId || ''
+        });
+        res.send('<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><title>Drive</title></head><body style="font-family:sans-serif;padding:24px;text-align:center"><p><strong>Google Drive conectado.</strong></p><p>Feche esta janela e volte ao sistema.</p><script>setTimeout(function(){ try { window.close(); } catch(e) {} }, 1500);</script></body></html>');
+    } catch (e) {
+        console.error(e);
+        res.status(500).send('<!DOCTYPE html><html><head><meta charset="utf-8"></head><body><p>Erro ao finalizar autorização.</p></body></html>');
+    }
 });
 
 // POST endpoints
@@ -2602,49 +2994,6 @@ function normalizeFinanceiroRow(row) {
     return out;
 }
 
-// Endpoints para dados financeiros (receber/pagar)
-// GET all financial data
-app.get('/api/financeiro', (req, res) => {
-    console.log('GET /api/financeiro chamado');
-    db.all(`SELECT 
-        id, descricao, tipo, valor, data, status, orcamento_id, cliente_id, 
-        numero_parcela, total_parcelas, forma_pagamento, vencimento, data_pagamento,
-        observacoes, created_at, updated_at, fornecedor
-    FROM transacoes 
-    WHERE tipo IN ('receber', 'pagar') 
-    ORDER BY data DESC`, [], (err, rows) => {
-        console.log('db.all callback chamado, err:', err, 'rows length:', rows ? rows.length : 'null');
-        if (err) {
-            console.error('Erro ao buscar do SQLite:', err.message);
-            res.status(500).json({ error: 'Erro interno ao buscar registros' });
-            return;
-        }
-
-        // Converter IDs para string e normalizar valores/vencimentos
-        const dados = rows.map(row => {
-            try {
-                const mapped = {
-                    ...row,
-                    id: String(row.id),
-                    orcamentoId: row.orcamento_id,
-                    clienteId: row.cliente_id,
-                    formaPagamento: row.forma_pagamento,
-                    dataPagamento: row.data_pagamento,
-                    grupoParcelamentoId: row.grupo_parcelamento_id,
-                    fornecedor: row.fornecedor
-                };
-                return normalizeFinanceiroRow(mapped);
-            } catch (e) {
-                console.error('Erro ao normalizar row:', e, row);
-                return row;
-            }
-        });
-
-        console.log('Enviando resposta com', dados.length, 'registros');
-        res.json(dados);
-    });
-});
-
 // Página utilitária: limpar itens específicos no localStorage do navegador
 // Uso: acesse http://localhost:3000/clear-local-storage no navegador para executar
 app.get('/clear-local-storage', (req, res) => {
@@ -2700,50 +3049,53 @@ app.get('/clear-local-storage', (req, res) => {
 
 // ========== ROTAS COM ID ESPECÍFICO (PUT, DELETE) - VÊM ANTES DA ROTA :tipo ==========
 
-// PUT update financial entry
+// PUT update financial entry (contas a receber: exige senha admin ou sessão admin)
 app.put('/api/financeiro/:id', (req, res) => {
-    const id = parseInt(req.params.id);
-    const entrada = req.body;
+    const id = parseInt(String(req.params.id), 10);
+    const entrada = req.body || {};
     console.log(`PUT /api/financeiro/${req.params.id} recebido. body:`, entrada);
 
-    // Se tentando mudar status para 'pago', validar se é uma parcela
-    if ((entrada.status || '').toLowerCase() === 'pago') {
-        // Primeiro, buscar o registro atual para obter informações de parcela
-        db.get('SELECT * FROM transacoes WHERE id = ?', [id], (getErr, currentRecord) => {
-            if (getErr) {
-                res.status(500).json({ error: getErr.message });
-                return;
-            }
-            if (!currentRecord) {
-                console.warn(`Registro não encontrado no DB para id=${id}`);
-                res.status(404).json({ error: 'Registro não encontrado', id: String(id) });
-                return;
-            }
+    if (Number.isNaN(id)) {
+        res.status(400).json({ error: 'ID inválido' });
+        return;
+    }
 
-            // Verificar se é uma parcela (numero_parcela > 1)
+    db.get('SELECT * FROM transacoes WHERE id = ?', [id], (getErr, currentRecord) => {
+        if (getErr) {
+            res.status(500).json({ error: getErr.message });
+            return;
+        }
+        if (!currentRecord) {
+            console.warn(`Registro não encontrado no DB para id=${id}`);
+            res.status(404).json({ error: 'Registro não encontrado', id: String(id) });
+            return;
+        }
+
+        const tipoRow = (currentRecord.tipo || '').toLowerCase();
+        if (tipoRow === 'receber' && !verifyAdminPasswordOrCookie(req)) {
+            res.status(403).json({ error: 'É necessária a senha do administrador para editar contas a receber.' });
+            return;
+        }
+
+        const wantsPago = (entrada.status || '').toLowerCase() === 'pago';
+
+        if (wantsPago) {
             const numeroParcela = currentRecord.numero_parcela;
             if (numeroParcela && numeroParcela > 1) {
-                // É uma parcela, verificar se a parcela anterior foi paga
                 const parcelaAnterior = numeroParcela - 1;
-                
-                // Buscar parcela anterior do mesmo grupo de parcelamento
                 const grupoParcelamentoId = currentRecord.grupo_parcelamento_id || currentRecord.grupoParcelamentoId;
                 const orcamentoId = currentRecord.orcamento_id || currentRecord.orcamentoId;
-                
-                // Montar query para encontrar parcela anterior
+
                 let queryParcelaAnterior = 'SELECT id, status FROM transacoes WHERE numero_parcela = ? AND ';
                 let paramsParcelaAnterior = [parcelaAnterior];
-                
+
                 if (grupoParcelamentoId) {
                     queryParcelaAnterior += 'grupo_parcelamento_id = ?';
                     paramsParcelaAnterior.push(grupoParcelamentoId);
                 } else if (orcamentoId) {
-                    queryParcelaAnterior += 'orcamento_id = ? AND numero_parcela = ?';
-                    paramsParcelaAnterior = [parcelaAnterior, orcamentoId, parcelaAnterior];
                     queryParcelaAnterior = 'SELECT id, status FROM transacoes WHERE numero_parcela = ? AND orcamento_id = ?';
                     paramsParcelaAnterior = [parcelaAnterior, orcamentoId];
                 } else {
-                    // Se não houver grupo de parcelamento ou orçamento, usar cliente_id
                     queryParcelaAnterior += 'cliente_id = ?';
                     paramsParcelaAnterior.push(currentRecord.cliente_id);
                 }
@@ -2754,9 +3106,8 @@ app.put('/api/financeiro/:id', (req, res) => {
                         return;
                     }
 
-                    // Se encontrou parcela anterior e ela não está paga, bloquear
                     if (parcelaAnteriorRecord && (parcelaAnteriorRecord.status || '').toLowerCase() !== 'pago') {
-                        res.status(409).json({ 
+                        res.status(409).json({
                             error: 'Não é possível liquidar esta parcela. A parcela anterior ainda não foi totalmente paga.',
                             details: {
                                 mensagem: `Parcela ${parcelaAnterior} deve ser paga antes de liquidar a parcela ${numeroParcela}`,
@@ -2767,123 +3118,69 @@ app.put('/api/financeiro/:id', (req, res) => {
                         return;
                     }
 
-                    // Parcela anterior está paga ou não existe, prosseguir com atualização
                     proceedWithUpdate();
                 });
             } else {
-                // Não é uma parcela ou é a primeira parcela, prosseguir
                 proceedWithUpdate();
             }
+        } else {
+            proceedWithUpdate();
+        }
 
-            function proceedWithUpdate() {
-                const sql = `UPDATE transacoes SET 
+        function proceedWithUpdate() {
+            const m = mergeFinanceiroUpdate(entrada, currentRecord);
+            const sql = `UPDATE transacoes SET 
                     status = ?,
                     descricao = ?,
                     observacoes = ?,
                     data_pagamento = ?,
                     fornecedor = ?,
                     grupo_parcelamento_id = ?,
+                    valor = ?,
+                    vencimento = ?,
+                    data = ?,
+                    desconto = ?,
                     updated_at = CURRENT_TIMESTAMP
                 WHERE id = ?`;
 
-                const params = [
-                    entrada.status || 'aberto',
-                    entrada.descricao || '',
-                    entrada.observacoes || '',
-                    entrada.dataPagamento || null,
-                    entrada.fornecedor || entrada.fornecedorNome || entrada.fornecedor_nome || null,
-                    entrada.grupoParcelamentoId || null,
-                    id
-                ];
+            const params = [
+                m.status,
+                m.descricao,
+                m.observacoes,
+                m.dataPagamento || null,
+                m.fornecedor || null,
+                m.grupoParcelamentoId || null,
+                m.valor,
+                m.vencimento || null,
+                m.data || null,
+                m.desconto,
+                id
+            ];
 
-                db.run(sql, params, function(err) {
-                    if (err) {
-                        res.status(500).json({ error: err.message });
-                        return;
-                    }
-                    if (this.changes === 0) {
-                        res.status(404).json({ error: 'Registro não encontrado' });
-                        return;
-                    }
-                    res.json({ id: String(id), ...entrada });
+            db.run(sql, params, function(err) {
+                if (err) {
+                    res.status(500).json({ error: err.message });
+                    return;
+                }
+                if (this.changes === 0) {
+                    res.status(404).json({ error: 'Registro não encontrado' });
+                    return;
+                }
+                res.json({
+                    id: String(id),
+                    ...entrada,
+                    status: m.status,
+                    descricao: m.descricao,
+                    observacoes: m.observacoes,
+                    dataPagamento: m.dataPagamento,
+                    valor: m.valor,
+                    vencimento: m.vencimento,
+                    data: m.data,
+                    desconto: m.desconto,
+                    descontoAVista: m.desconto
                 });
-            }
-        });
-    } else {
-        // Não é tentativa de marcar como pago, prosseguir normalmente
-        const sql = `UPDATE transacoes SET 
-            status = ?,
-            descricao = ?,
-            observacoes = ?,
-            data_pagamento = ?,
-            fornecedor = ?,
-            grupo_parcelamento_id = ?,
-            updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?`;
-
-        const params = [
-            entrada.status || 'aberto',
-            entrada.descricao || '',
-            entrada.observacoes || '',
-            entrada.dataPagamento || null,
-            entrada.fornecedor || entrada.fornecedorNome || entrada.fornecedor_nome || null,
-            entrada.grupoParcelamentoId || null,
-            id
-        ];
-
-        db.run(sql, params, function(err) {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            if (this.changes === 0) {
-                res.status(404).json({ error: 'Registro não encontrado' });
-                return;
-            }
-            res.json({ id: String(id), ...entrada });
-        });
-    }
-});
-
-// DELETE financial entry
-app.delete('/api/financeiro/:id', (req, res) => {
-    const receivedId = req.params.id;
-    console.log(`DELETE /api/financeiro/${receivedId} recebido`);
-    // Primeiro buscar o registro para retornar seu tipo/conteúdo
-    db.get('SELECT * FROM transacoes WHERE id = ?', [receivedId], (getErr, row) => {
-        if (getErr) {
-            res.status(500).json({ error: getErr.message, requestedId: receivedId });
-            return;
+            });
         }
-        if (!row) {
-            res.status(404).json({ error: 'Registro não encontrado', requestedId: receivedId });
-            return;
-        }
-
-        // Guardar tipo e dados antes de deletar
-        const tipo = row.tipo || null;
-        const removedMapped = {
-            ...row,
-            id: row.id ? String(row.id) : null,
-            orcamentoId: row.orcamento_id,
-            clienteId: row.cliente_id,
-            formaPagamento: row.forma_pagamento,
-            dataPagamento: row.data_pagamento,
-            grupoParcelamentoId: row.grupo_parcelamento_id
-        };
-
-        db.run('DELETE FROM transacoes WHERE id = ?', [receivedId], function(delErr) {
-            if (delErr) {
-                res.status(500).json({ error: delErr.message, requestedId: receivedId });
-                return;
-            }
-            if (this.changes === 0) {
-                res.status(404).json({ error: 'Registro não encontrado', requestedId: receivedId });
-                return;
-            }
-
-            res.json({ success: true, deletedId: String(receivedId), tipo, removed: normalizeFinanceiroRow(removedMapped) });
-        });
     });
 });
 
@@ -2928,35 +3225,6 @@ app.get('/api/financeiro/:tipo', (req, res) => {
             grupoParcelamentoId: row.grupo_parcelamento_id,
             fornecedor: row.fornecedor
         }));
-        res.json(dados);
-    });
-});
-
-// GET financial entries (receber e pagar)
-app.get('/api/financeiro', (req, res) => {
-    db.all(`SELECT 
-        id,
-        tipo,
-        valor,
-        descricao,
-        status,
-        data,
-        vencimento,
-        orcamento_id as orcamentoId,
-        cliente_id as clienteId,
-        observacoes,
-        forma_pagamento as formaPagamento,
-        data_pagamento as dataPagamento,
-        criado_em as criadoEm,
-        grupo_parcelamento_id as grupoParcelamentoId
-        FROM transacoes 
-        WHERE tipo IN ('receber', 'pagar')
-        ORDER BY vencimento DESC, id DESC`, [], (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        const dados = rows.map(row => normalizeFinanceiroRow({ ...row, id: row.id ? String(row.id) : null }));
         res.json(dados);
     });
 });
@@ -3123,13 +3391,12 @@ app.post('/api/financeiro', (req, res) => {
     }
 });
 
-// Iniciar servidor
-const server = app.listen(port, (err) => {
-    if (err) {
-        console.error('Erro ao iniciar servidor:', err);
-        process.exit(1);
-    }
-    console.log(`Servidor rodando em http://localhost:${port}`);
-    console.log(`Banco de dados local: ${dbPath}`);
-    console.log('Callback do app.listen executado');
-});
+inicializarBanco();
+
+function startServer() {
+  return app.listen(PORT, () => {
+    console.log(`Servidor rodando em http://localhost:${PORT}`);
+  });
+}
+
+module.exports = { startServer };
