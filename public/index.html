@@ -952,7 +952,7 @@
 
     <!-- Modal Orçamento -->
     <div id="modal-orcamento" class="modal">
-        <div class="modal-content">
+        <div class="modal-content" style="max-height: 90vh; overflow-y: auto;">
             <div class="modal-header">
                 <h3 class="modal-title">Novo Orçamento</h3>
                 <div class="modal-actions">
@@ -963,16 +963,44 @@
             <form id="form-orcamento">
                 <div class="form-group">
                     <label>Cliente *</label>
-                    <select id="orcamento-cliente" required onchange="sistema.carregarAgendamentosClienteOrcamento(this.value)">
+                    <div style="position: relative;">
+                        <input type="text" id="orcamento-cliente-search"
+                               placeholder="Digite o nome ou telefone do cliente..."
+                               style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;"
+                               autocomplete="off"
+                               oninput="sistema.filtrarClientesOrcamento(this.value)">
+                        <div id="orcamento-cliente-lista"
+                             style="position: absolute; top: 100%; left: 0; right: 0; background: white;
+                                    border: 1px solid #ccc; border-top: none; max-height: 250px; overflow-y: auto;
+                                    z-index: 1000; border-radius: 0 0 4px 4px; display: none;">
+                        </div>
+                    </div>
+                    <select id="orcamento-cliente" required style="display: none;">
                         <option value="">Selecione um cliente</option>
                     </select>
+                    <div id="orcamento-cliente-selecionado-badge" style="margin-top: 8px; display: none;">
+                        <span style="background: #007bff; color: white; padding: 6px 12px; border-radius: 20px; font-size: 14px;">
+                            <span id="orcamento-cliente-selecionado-nome"></span>
+                            <button type="button" style="background: none; border: none; color: white; cursor: pointer; margin-left: 8px; font-weight: bold;"
+                                    onclick="sistema.limparClienteSelecionadoOrcamento()">×</button>
+                        </span>
+                    </div>
                 </div>
 
                 <div class="form-group">
-                    <label>Agendamento *</label>
-                    <select id="orcamento-agendamento" required onchange="sistema.carregarDadosAgendamentoOrcamento(this.value)">
-                        <option value="">Selecione um agendamento</option>
+                    <label>Agendamento (opcional)</label>
+                    <select id="orcamento-agendamento" onchange="sistema.carregarDadosAgendamentoOrcamento(this.value)">
+                        <option value="">Sem agendamento (orçamento avulso)</option>
                     </select>
+                    <small style="color: #666;">Se não houver agendamento, escolha o veículo abaixo.</small>
+                </div>
+
+                <div class="form-group" id="orcamento-veiculo-grupo" style="display: none;">
+                    <label>Veículo</label>
+                    <select id="orcamento-veiculo-select">
+                        <option value="">Selecione um veículo (opcional se não houver cadastro)</option>
+                    </select>
+                    <small style="color: #666;">Com mais de um veículo para o cliente, escolha qual entra no orçamento. Role o formulário para cima se não vir este campo.</small>
                 </div>
 
                 <div class="form-group" id="orcamento-veiculo-info" style="display: none;">
@@ -2758,44 +2786,56 @@
                     const isEdit = !!editId;
                     
                     const clienteId = parseInt(document.getElementById('orcamento-cliente').value);
-                    const agendamentoId = parseInt(document.getElementById('orcamento-agendamento').value);
+                    const agendamentoRaw = document.getElementById('orcamento-agendamento').value;
+                    const agendamentoIdParsed = agendamentoRaw ? parseInt(agendamentoRaw, 10) : null;
+                    const agendamentoId = agendamentoRaw && !Number.isNaN(agendamentoIdParsed) ? agendamentoIdParsed : null;
                     const validade = parseInt(document.getElementById('orcamento-validade').value);
                     const observacoes = document.getElementById('orcamento-observacoes').value.trim();
 
                     if (!clienteId) throw new Error('Selecione um cliente');
-                    if (!agendamentoId) throw new Error('Selecione um agendamento');
                     if (!validade || validade < 1) throw new Error('Validade deve ser de pelo menos 1 dia');
 
-                    // Obter veículo do agendamento
-                    const agendamento = this.dados.agendamentos.find(a => a.id === agendamentoId);
-                    if (!agendamento) throw new Error('Agendamento não encontrado');
-                    
-                    const veiculoId = agendamento.veiculoId;
-                    if (!veiculoId || veiculoId === null || veiculoId === undefined || veiculoId === '') {
-                        console.error('Agendamento sem veículo:', {
-                            agendamentoId,
-                            agendamento: agendamento
-                        });
-                        throw new Error('Veículo não encontrado no agendamento. Verifique se o agendamento possui um veículo associado.');
+                    let veiculoId;
+                    if (agendamentoId) {
+                        const agendamento = this.dados.agendamentos.find(a => a.id === agendamentoId);
+                        if (!agendamento) throw new Error('Agendamento não encontrado');
+                        veiculoId = agendamento.veiculoId;
+                        if (veiculoId === null || veiculoId === undefined || veiculoId === '') {
+                            throw new Error('Veículo não encontrado no agendamento. Verifique se o agendamento possui um veículo associado.');
+                        }
+                    } else {
+                        this.reconstruirListaVeiculos();
+                        const veiculoSel = document.getElementById('orcamento-veiculo-select').value;
+                        const parsedSel = veiculoSel ? parseInt(veiculoSel, 10) : NaN;
+                        if (veiculoSel !== '' && !Number.isNaN(parsedSel)) {
+                            veiculoId = parsedSel;
+                        } else {
+                            const doCliente = (this.dados.veiculos || []).filter(v => {
+                                const rawCid = v.clienteId ?? v.cliente_id;
+                                if (rawCid === undefined || rawCid === null || rawCid === '') return false;
+                                if (v.ativo === false) return false;
+                                return Number(rawCid) === Number(clienteId) || String(rawCid) === String(clienteId);
+                            });
+                            if (doCliente.length === 1) {
+                                veiculoId = doCliente[0].id;
+                            } else if (doCliente.length > 1) {
+                                const grupo = document.getElementById('orcamento-veiculo-grupo');
+                                if (grupo) grupo.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                throw new Error('Este cliente tem mais de um veículo. Selecione qual usar no campo "Veículo" (no início deste formulário).');
+                            } else {
+                                veiculoId = null;
+                            }
+                        }
                     }
                     
-                    // Verificar se o veículo existe na lista usando busca flexível
-                    const veiculoExiste = this.buscarVeiculoPorId(veiculoId);
-                    
-                    if (!veiculoExiste) {
-                        // Tentar reconstruir a lista de veículos e buscar novamente
-                        this.reconstruirListaVeiculos();
-                        const veiculoExisteNovamente = this.buscarVeiculoPorId(veiculoId);
-                        
-                        if (!veiculoExisteNovamente) {
-                            console.error('Veículo do agendamento não encontrado na lista:', {
-                                veiculoId,
-                                tipoVeiculoId: typeof veiculoId,
-                                veiculosDisponiveis: this.dados.veiculos.map(v => ({ id: v.id, tipo: typeof v.id }))
-                            });
-                            // Em vez de lançar erro, permitir continuar mas avisar
-                            console.warn('Veículo do agendamento não encontrado, mas continuando com o orçamento...');
-                            // Não lançar erro, apenas avisar - o veículo pode estar em outro formato
+                    if (veiculoId !== null && veiculoId !== undefined && veiculoId !== '') {
+                        const veiculoExiste = this.buscarVeiculoPorId(veiculoId);
+                        if (!veiculoExiste) {
+                            this.reconstruirListaVeiculos();
+                            const veiculoExisteNovamente = this.buscarVeiculoPorId(veiculoId);
+                            if (!veiculoExisteNovamente) {
+                                console.warn('Veículo do orçamento não encontrado na lista local; seguindo mesmo assim.', { veiculoId });
+                            }
                         }
                     }
 
@@ -2842,38 +2882,73 @@
                         const totalServicos = servicos.reduce((sum, s) => sum + (s.valor * s.quantidade), 0);
                         const totalPecas = pecas.reduce((sum, p) => sum + (p.valor * p.quantidade), 0);
                         const novoTotal = totalServicos + totalPecas;
-                        
-                        const orcamentoAtualizado = await this.atualizarOrcamentoServidor(editId, {
+
+                        const idxAntes = this.dados.orcamentos.findIndex(o => o.id === editId);
+                        const orcAntes = idxAntes >= 0 ? this.dados.orcamentos[idxAntes] : null;
+                        const eraAprovado = orcAntes && orcAntes.status === 'aprovado';
+
+                        const updates = {
                             clienteId,
                             veiculoId,
-                            agendamentoId,
+                            agendamentoId: agendamentoId || null,
                             servicos,
                             pecas,
                             observacoes,
                             validade,
                             total: novoTotal
-                        });
+                        };
+                        if (eraAprovado) {
+                            updates.status = 'pendente';
+                        }
+
+                        const orcamentoAtualizado = await this.atualizarOrcamentoServidor(editId, updates);
+
+                        if (eraAprovado) {
+                            this.sincronizarOSComOrcamento(orcamentoAtualizado);
+                            const osRel = this.dados.ordensServico.find(o => o.orcamentoId === editId);
+                            if (osRel) {
+                                try {
+                                    await this.atualizarOrdemServicoServidor(osRel.id, {
+                                        servicos: osRel.servicos,
+                                        pecas: osRel.pecas,
+                                        observacoes: osRel.observacoes
+                                    });
+                                } catch (e) {
+                                    console.warn('Não foi possível sincronizar a O.S. no servidor:', e);
+                                }
+                            }
+                        }
 
                         this.atualizarTodosDados();
-                        this.log(`Orçamento #${orcamentoAtualizado.numero} atualizado com sucesso!`, 'success');
-                        
+                        this.log(
+                            eraAprovado
+                                ? `Orçamento #${orcamentoAtualizado.numero} atualizado e reaberto para nova aprovação.`
+                                : `Orçamento #${orcamentoAtualizado.numero} atualizado com sucesso!`,
+                            'success'
+                        );
+
                         delete form.dataset.editId;
                         fecharModalOrcamento();
-                        
-                        if (state.currentOrcamentoId === editId) {
-                            this.visualizarOrcamento(editId);
+
+                        state.currentOrcamentoId = editId;
+                        this.visualizarOrcamento(editId);
+
+                        if (eraAprovado) {
+                            setTimeout(() => {
+                                this.enviarWhatsAppPedidoNovaAprovacao(orcamentoAtualizado);
+                            }, 600);
                         }
-                        
+
                         return orcamentoAtualizado;
                     } else {
                         const novoOrcamento = await this.adicionarOrcamento({
-                            clienteId, 
-                            veiculoId, 
-                            agendamentoId,
-                            servicos, 
+                            clienteId,
+                            veiculoId,
+                            agendamentoId: agendamentoId || null,
+                            servicos,
                             pecas,
-                            observacoes, 
-                            validade 
+                            observacoes,
+                            validade
                         });
                         fecharModalOrcamento();
                         this.log('Orçamento gerado com sucesso!', 'success');
@@ -2943,15 +3018,18 @@
                     return;
                 }
                 
-                // Verificar se pode editar (apenas pendentes podem ser editados)
-                if (orcamento.status === 'aprovado') {
-                    alert('Orçamentos aprovados não podem ser editados para garantir a integridade e confiança entre cliente e oficina.');
+                if (orcamento.status === 'em-servico' || orcamento.status === 'finalizado') {
+                    alert('Orçamentos em serviço ou finalizados não podem ser editados.');
                     return;
                 }
-                
                 if (orcamento.status === 'recusado') {
                     alert('Orçamentos recusados não podem ser editados');
                     return;
+                }
+                if (orcamento.status === 'aprovado') {
+                    if (!confirm('Este orçamento está APROVADO.\n\nAo salvar as alterações, ele voltará ao status PENDENTE (aberto) e será aberto o WhatsApp com uma mensagem pedindo que o cliente revise e aprove novamente.\n\nDeseja continuar?')) {
+                        return;
+                    }
                 }
                 
                 // Preencher formulário com dados do orçamento
@@ -2961,15 +3039,37 @@
                 // Atualizar título do modal
                 document.querySelector('#modal-orcamento .modal-title').textContent = `Editar Orçamento #${orcamento.numero}`;
                 
-                // Preencher campos básicos
-                document.getElementById('orcamento-cliente').value = orcamento.clienteId;
-                document.getElementById('orcamento-agendamento').value = orcamento.agendamentoId || '';
+                // Preencher campos básicos (cliente com busca + badge)
+                const clienteOrc = this.dados.clientes.find(c => c.id == orcamento.clienteId);
+                if (clienteOrc) {
+                    this.aplicarClienteSelecionadoOrcamento(clienteOrc.id, clienteOrc.nome);
+                } else {
+                    this.garantirOpcaoClienteOrcamentoSelect(orcamento.clienteId, `Cliente #${orcamento.clienteId}`);
+                    const si = document.getElementById('orcamento-cliente-search');
+                    if (si) {
+                        si.disabled = false;
+                        si.style.opacity = '1';
+                        si.style.cursor = 'text';
+                        si.placeholder = 'Digite o nome ou telefone do cliente...';
+                        si.value = '';
+                    }
+                    document.getElementById('orcamento-cliente-selecionado-badge').style.display = 'none';
+                    if (orcamento.clienteId) {
+                        this.carregarAgendamentosClienteOrcamento(orcamento.clienteId);
+                    }
+                }
                 document.getElementById('orcamento-validade').value = orcamento.validade;
                 document.getElementById('orcamento-observacoes').value = orcamento.observacoes || '';
-                
-                // Carregar agendamentos do cliente
-                if (orcamento.clienteId) {
-                    sistema.carregarAgendamentosClienteOrcamento(orcamento.clienteId);
+                document.getElementById('orcamento-agendamento').value = orcamento.agendamentoId ? String(orcamento.agendamentoId) : '';
+                if (orcamento.agendamentoId) {
+                    sistema.carregarDadosAgendamentoOrcamento(orcamento.agendamentoId);
+                } else {
+                    sistema.carregarVeiculosClienteOrcamento(orcamento.clienteId);
+                    if (orcamento.veiculoId) {
+                        document.getElementById('orcamento-veiculo-select').value = String(orcamento.veiculoId);
+                    }
+                    document.getElementById('orcamento-veiculo-info').style.display = 'none';
+                    document.getElementById('orcamento-veiculo-grupo').style.display = orcamento.clienteId ? 'block' : 'none';
                 }
                 
                 // Limpar listas
@@ -3126,6 +3226,19 @@
                         </div>
                     </div>
 
+                    ${orcamento.pecas && orcamento.pecas.length > 0 ? `
+                    <div class="servicos-lista" style="margin-top: 20px;">
+                        <h4>Peças/Itens</h4>
+                        ${orcamento.pecas.map(peca => `
+                            <div class="servico-linha">
+                                <div class="servico-descricao">${peca.item}</div>
+                                <div class="servico-quantidade">${peca.quantidade}x</div>
+                                <div class="servico-valor">R$ ${peca.valor.toFixed(2)}</div>
+                                <div class="servico-total">R$ ${(peca.quantidade * peca.valor).toFixed(2)}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                    ` : ''}
                     ${orcamento.servicos && orcamento.servicos.length > 0 ? `
                     <div class="servicos-lista">
                         <h4>Serviços Propostos</h4>
@@ -3140,19 +3253,6 @@
                     </div>
                     ` : ''}
                     
-                    ${orcamento.pecas && orcamento.pecas.length > 0 ? `
-                    <div class="servicos-lista" style="margin-top: 20px;">
-                        <h4>Peças/Itens</h4>
-                        ${orcamento.pecas.map(peca => `
-                            <div class="servico-linha">
-                                <div class="servico-descricao">${peca.item}</div>
-                                <div class="servico-quantidade">${peca.quantidade}x</div>
-                                <div class="servico-valor">R$ ${peca.valor.toFixed(2)}</div>
-                                <div class="servico-total">R$ ${(peca.quantidade * peca.valor).toFixed(2)}</div>
-                            </div>
-                        `).join('')}
-                    </div>
-                    ` : ''}
 
                     <div class="total-geral">
                         <strong>TOTAL: R$ ${orcamento.total.toFixed(2)}</strong>
@@ -3176,57 +3276,111 @@
 
             async aprovarOrcamento() {
                 if (!state.currentOrcamentoId) return;
-                
+
                 const orcamento = this.dados.orcamentos.find(o => o.id === state.currentOrcamentoId);
-                if (orcamento) {
+                if (!orcamento) return;
+
+                try {
                     const atualizado = await this.atualizarOrcamentoServidor(orcamento.id, { status: 'aprovado' });
-                    // criar lançamento financeiro pendente (receita) baseado no orçamento aprovado
-                    this.criarLancamentoDeOrcamento(atualizado);
-                    // Gerar Ordem de Serviço automaticamente
                     await this.gerarOrdemServicoDoOrcamento(atualizado);
                     this.atualizarTodosDados();
-                    this.log(`Orçamento #${atualizado.numero} aprovado e O.S. gerada`, 'success');
-                    // Atualizar visualização do orçamento
+                    this.log(
+                        `Orçamento #${atualizado.numero} aprovado e O.S. verificada/gerada. A duplicata no financeiro será gerada ao finalizar a O.S.`,
+                        'success'
+                    );
                     this.visualizarOrcamento(state.currentOrcamentoId);
+                } catch (error) {
+                    this.log(`Erro ao aprovar orçamento: ${error.message}`, 'error');
+                    alert(error.message);
                 }
             }
 
-            async criarLancamentoDeOrcamento(orcamento) {
-                // Verificar se já existe uma transação (duplicata) para este orçamento
-                const transacaoExistente = this.dados.transacoes.find(t => 
-                    t.orcamentoId === orcamento.id && !t.parcelaDe
-                );
-                
+            encontrarDuplicataPrincipalDoOrcamento(orcamentoId) {
+                const lista = this.dados.transacoes || [];
+                const mesmoOrc = (t) => {
+                    if (t.parcelaDe) return false;
+                    const oid = t.orcamentoId ?? t.orcamento_id;
+                    return oid != null && Number(oid) === Number(orcamentoId);
+                };
+                const comFlag = lista.find(t => mesmoOrc(t) && (t.isDuplicata === true || t.isDuplicata === 1));
+                if (comFlag) return comFlag;
+                return lista.find(t => mesmoOrc(t)) || null;
+            }
+
+            transacaoDuplicataJaQuitada(transacao) {
+                const st = String(transacao.status || '').toLowerCase();
+                return ['liquidado', 'liquidada', 'pago', 'paga', 'quitado', 'quitada', 'recebido', 'recebida'].includes(st);
+            }
+
+            async criarLancamentoDeOrcamento(orcamento, opcoes = {}) {
+                const transacaoExistente = this.encontrarDuplicataPrincipalDoOrcamento(orcamento.id);
+
                 if (transacaoExistente) {
-                    this.log(`Já existe uma duplicata para o orçamento #${orcamento.numero}`, 'warning');
-                    alert(`Este orçamento já possui uma duplicata no financeiro. Não é possível criar outra.`);
-                    return;
+                    if (this.transacaoDuplicataJaQuitada(transacaoExistente)) {
+                        alert(
+                            'A duplicata deste orçamento já está quitada ou paga no financeiro.\n\n' +
+                            'Não é possível alterar o valor automaticamente. Se o total do orçamento mudou, ajuste o lançamento manualmente no módulo financeiro.'
+                        );
+                        return false;
+                    }
+                    const valorAntigo = parseFloat(transacaoExistente.valor) || 0;
+                    const valorNovo = parseFloat(orcamento.total) || 0;
+                    if (Math.abs(valorAntigo - valorNovo) < 0.009) {
+                        return true;
+                    }
+                    const msg =
+                        `Já existe uma duplicata no financeiro para o orçamento #${orcamento.numero}.\n\n` +
+                        `Valor atual da duplicata: R$ ${valorAntigo.toFixed(2)}\n` +
+                        `Novo total do orçamento (itens atuais): R$ ${valorNovo.toFixed(2)}\n\n` +
+                        `O sistema irá ATUALIZAR a duplicata existente para esse novo valor.\n\n` +
+                        `Deseja continuar?`;
+                    if (!confirm(msg)) {
+                        return false;
+                    }
+                    const linhaHist = `[${new Date().toLocaleString('pt-BR')}] Valor atualizado após revisão do orçamento: R$ ${valorAntigo.toFixed(2)} → R$ ${valorNovo.toFixed(2)}.`;
+                    const obsAnt = (transacaoExistente.observacoes && String(transacaoExistente.observacoes).trim()) || '';
+                    await this.atualizarTransacaoServidor(transacaoExistente.id, {
+                        valor: valorNovo,
+                        descricao: `Duplicata #${orcamento.numero}`,
+                        observacoes: obsAnt ? `${obsAnt}\n${linhaHist}` : linhaHist
+                    });
+                    this.log(`Duplicata do orçamento #${orcamento.numero} atualizada para R$ ${valorNovo.toFixed(2)}`, 'success');
+                    return true;
                 }
-                
-                // Marcar orçamento como convertido em duplicata
+
                 orcamento.statusFinanceiro = 'duplicata';
                 orcamento.dataDuplicata = new Date().toISOString().split('T')[0];
                 await this.atualizarOrcamentoServidor(orcamento.id, {
                     statusFinanceiro: 'duplicata',
                     dataDuplicata: orcamento.dataDuplicata
                 });
-                
-                // Criar duplicata pendente baseada no orçamento
+
+                const obsBase = `Duplicata referente ao orçamento #${orcamento.numero}`;
+                const obsExtra = opcoes.origemFinalizacaoOS
+                    ? ' · Gerada na finalização da ordem de serviço'
+                    : '';
+
                 const dados = {
                     tipo: 'receita',
                     data: new Date().toISOString().split('T')[0],
                     descricao: `Duplicata #${orcamento.numero}`,
                     valor: orcamento.total,
                     status: 'pendente',
-                    observacoes: `Duplicata gerada do orçamento #${orcamento.numero}`,
+                    observacoes: obsBase + obsExtra,
                     orcamentoId: orcamento.id,
                     clienteId: orcamento.clienteId,
                     isDuplicata: true,
                     numeroDuplicata: orcamento.numero
                 };
-                
+
                 await this.adicionarTransacao(dados);
-                this.log(`Duplicata criada para o orçamento #${orcamento.numero}`, 'success');
+                this.log(
+                    opcoes.origemFinalizacaoOS
+                        ? `Duplicata criada no financeiro (O.S. finalizada · orçamento #${orcamento.numero})`
+                        : `Duplicata criada para o orçamento #${orcamento.numero}`,
+                    'success'
+                );
+                return true;
             }
 
             async recusarOrcamento() {
@@ -3246,49 +3400,41 @@
                 }
             }
 
-            async enviarWhatsApp() {
-                if (!state.currentOrcamentoId) return;
-                
-                const orcamento = this.dados.orcamentos.find(o => o.id === state.currentOrcamentoId);
-                if (!orcamento) return;
-                
-                const cliente = this.dados.clientes.find(c => c.id === orcamento.clienteId);
-                if (!cliente || !cliente.whatsapp) {
-                    alert('Cliente não possui WhatsApp cadastrado');
-                    return;
-                }
-                
-                // Garantir lista atualizada
+            resolverVeiculoInfoParaOrcamento(orcamento) {
                 this.reconstruirListaVeiculos();
-                
-                // Buscar veículo: primeiro tentar pelo veiculoId do orçamento, depois pelo agendamento
                 let veiculo = null;
                 if (orcamento.veiculoId) {
                     veiculo = this.buscarVeiculoPorId(orcamento.veiculoId);
                 }
-                
-                // Se não encontrou pelo veiculoId do orçamento, tentar pelo agendamento
                 if (!veiculo && orcamento.agendamentoId) {
                     const agendamento = this.dados.agendamentos.find(a => a.id === orcamento.agendamentoId);
                     if (agendamento && agendamento.veiculoId) {
                         veiculo = this.buscarVeiculoPorId(agendamento.veiculoId);
                     }
                 }
-                
                 const veiculoInfo = veiculo ? `${veiculo.placa} - ${veiculo.marca} ${veiculo.modelo}` : 'N/A';
-                
-                // Montar mensagem
-                const statusTexto = orcamento.status === 'aprovado' ? 'APROVADO' 
-                    : orcamento.status === 'recusado' ? 'RECUSADO'
-                    : orcamento.status === 'em-servico' ? 'EM SERVIÇO'
-                    : orcamento.status === 'finalizado' ? 'FINALIZADO'
-                    : 'PENDENTE';
-                
-                let mensagem = `*ORÇAMENTO #${orcamento.numero}*\n`;
-                mensagem += `*Status: ${statusTexto}*\n\n`;
-                mensagem += `Olá ${cliente.nome}!\n\n`;
-                mensagem += `Segue o orçamento para o veículo: ${veiculoInfo}\n\n`;
-                
+                return { veiculo, veiculoInfo };
+            }
+
+            montarMensagemWhatsAppOrcamento(orcamento, cliente, veiculoInfo, reaprovacao) {
+                let mensagem = '';
+                if (reaprovacao) {
+                    mensagem += `*ORÇAMENTO #${orcamento.numero} — ATUALIZADO*\n\n`;
+                    mensagem += `Olá ${cliente.nome}!\n\n`;
+                    mensagem += `Informamos que seu orçamento foi *alterado* (foram incluídos novos itens/serviços ou ajustados valores).\n`;
+                    mensagem += `Segue o orçamento *atualizado* referente ao veículo: ${veiculoInfo}\n\n`;
+                } else {
+                    const statusTexto = orcamento.status === 'aprovado' ? 'APROVADO'
+                        : orcamento.status === 'recusado' ? 'RECUSADO'
+                        : orcamento.status === 'em-servico' ? 'EM SERVIÇO'
+                        : orcamento.status === 'finalizado' ? 'FINALIZADO'
+                        : 'PENDENTE';
+                    mensagem += `*ORÇAMENTO #${orcamento.numero}*\n`;
+                    mensagem += `*Status: ${statusTexto}*\n\n`;
+                    mensagem += `Olá ${cliente.nome}!\n\n`;
+                    mensagem += `Segue o orçamento para o veículo: ${veiculoInfo}\n\n`;
+                }
+
                 if (orcamento.servicos && orcamento.servicos.length > 0) {
                     mensagem += `*SERVIÇOS:*\n`;
                     orcamento.servicos.forEach(servico => {
@@ -3303,29 +3449,63 @@
                     });
                     mensagem += `\n`;
                 }
-                
+
                 if (orcamento.pecas && orcamento.pecas.length > 0) {
                     mensagem += `*PEÇAS/ITENS:*\n`;
                     orcamento.pecas.forEach(peca => {
-                        mensagem += `• ${peca.item} - ${peca.quantidade}x - R$ ${peca.valor.toFixed(2)} = R$ ${peca.valorTotal.toFixed(2)}\n`;
+                        const q = peca.quantidade || 1;
+                        const vu = peca.valor || 0;
+                        const pTot = (peca.valorTotal != null && peca.valorTotal !== '')
+                            ? parseFloat(peca.valorTotal)
+                            : vu * q;
+                        mensagem += `• ${peca.item} - ${q}x - R$ ${vu.toFixed(2)} = R$ ${pTot.toFixed(2)}\n`;
                     });
                     mensagem += `\n`;
                 }
-                
-                mensagem += `*TOTAL: R$ ${orcamento.total.toFixed(2)}*\n\n`;
+
+                const totalNum = parseFloat(orcamento.total) || 0;
+                mensagem += `*TOTAL: R$ ${totalNum.toFixed(2)}*\n\n`;
                 mensagem += `Validade: ${new Date(new Date(orcamento.data).getTime() + orcamento.validade * 24 * 60 * 60 * 1000).toLocaleDateString('pt-BR')}\n\n`;
-                
+
                 if (orcamento.observacoes) {
                     mensagem += `Observações: ${orcamento.observacoes}\n\n`;
                 }
-                
-                mensagem += `Aguardamos sua aprovação!`;
-                
-                // Remover caracteres especiais do WhatsApp
+
+                mensagem += reaprovacao
+                    ? `Por favor, *revise o valor total* e nos envie sua *nova aprovação* (pode responder esta mensagem ou falar conosco).`
+                    : `Aguardamos sua aprovação!`;
+
+                return mensagem;
+            }
+
+            async enviarWhatsAppPedidoNovaAprovacao(orcamento) {
+                if (!orcamento) return;
+                const cliente = this.dados.clientes.find(c => c.id == orcamento.clienteId);
+                if (!cliente || !cliente.whatsapp) {
+                    alert('Orçamento reaberto para aprovação, mas o cliente não possui WhatsApp cadastrado. Envie o aviso por outro canal.');
+                    return;
+                }
+                const { veiculoInfo } = this.resolverVeiculoInfoParaOrcamento(orcamento);
+                const mensagem = this.montarMensagemWhatsAppOrcamento(orcamento, cliente, veiculoInfo, true);
                 const whatsappLimpo = cliente.whatsapp.replace(/\D/g, '');
-                const mensagemEncoded = encodeURIComponent(mensagem);
-                
-                // Tentar abrir app nativo com fallback para web
+                openWhatsAppFallback(whatsappLimpo, mensagem);
+            }
+
+            async enviarWhatsApp() {
+                if (!state.currentOrcamentoId) return;
+
+                const orcamento = this.dados.orcamentos.find(o => o.id === state.currentOrcamentoId);
+                if (!orcamento) return;
+
+                const cliente = this.dados.clientes.find(c => c.id == orcamento.clienteId);
+                if (!cliente || !cliente.whatsapp) {
+                    alert('Cliente não possui WhatsApp cadastrado');
+                    return;
+                }
+
+                const { veiculoInfo } = this.resolverVeiculoInfoParaOrcamento(orcamento);
+                const mensagem = this.montarMensagemWhatsAppOrcamento(orcamento, cliente, veiculoInfo, false);
+                const whatsappLimpo = cliente.whatsapp.replace(/\D/g, '');
                 openWhatsAppFallback(whatsappLimpo, mensagem);
             }
 
@@ -3530,65 +3710,210 @@
                 searchInput.focus();
             }
 
-            carregarAgendamentosClienteOrcamento(clienteId) {
-                const select = document.getElementById('orcamento-agendamento');
-                select.innerHTML = '<option value="">Selecione um agendamento</option>';
-                
-                if (!clienteId) {
-                    document.getElementById('orcamento-veiculo-info').style.display = 'none';
+            filtrarClientesOrcamento(termo) {
+                const lista = document.getElementById('orcamento-cliente-lista');
+                if (!lista) return;
+
+                if (!termo || termo.trim().length < 1) {
+                    lista.style.display = 'none';
                     return;
                 }
-                
-                // Buscar apenas agendamentos não finalizados do cliente
-                const agendamentos = this.dados.agendamentos.filter(a => 
-                    a.clienteId === parseInt(clienteId) && 
-                    a.status !== 'finalizado' && 
-                    a.status !== 'concluido'
-                );
-                
-                if (agendamentos.length === 0) {
+
+                const termoLower = termo.toLowerCase();
+                const clientes = state.dados.clientes || [];
+                const clientesFiltrados = clientes.filter(c =>
+                    (c.nome && c.nome.toLowerCase().includes(termoLower)) ||
+                    (c.telefone && String(c.telefone).includes(termo)) ||
+                    (c.whatsapp && String(c.whatsapp).includes(termo))
+                ).slice(0, 15);
+
+                if (clientesFiltrados.length === 0) {
+                    lista.innerHTML = '<div style="padding: 10px; color: #999;">Nenhum cliente encontrado</div>';
+                    lista.style.display = 'block';
+                    return;
+                }
+
+                lista.innerHTML = clientesFiltrados.map(cliente => `
+                    <div style="padding: 10px; border-bottom: 1px solid #eee; cursor: pointer; transition: background-color 0.2s;"
+                         onmouseover="this.style.backgroundColor = '#f5f5f5';"
+                         onmouseout="this.style.backgroundColor = 'transparent';"
+                         onclick="sistema.selecionarClienteOrcamento(${cliente.id}, '${String(cliente.nome || '').replace(/'/g, "\\'")}', '${String(cliente.telefone || cliente.whatsapp || '').replace(/'/g, "\\'")}')">
+                        <div style="font-weight: bold;">${cliente.nome || ''}</div>
+                        <div style="font-size: 12px; color: #666;">
+                            ${cliente.telefone ? '📱 ' + cliente.telefone : ''}
+                            ${cliente.whatsapp && cliente.whatsapp !== cliente.telefone ? '📱 ' + cliente.whatsapp : ''}
+                            ${cliente.email ? '📧 ' + cliente.email : ''}
+                        </div>
+                    </div>
+                `).join('');
+
+                lista.style.display = 'block';
+            }
+
+            garantirOpcaoClienteOrcamentoSelect(clienteId, clienteNome) {
+                const sel = document.getElementById('orcamento-cliente');
+                if (!sel) return;
+                const idStr = String(clienteId);
+                const existe = Array.from(sel.options).some(o => String(o.value) === idStr);
+                if (!existe) {
+                    const opt = document.createElement('option');
+                    opt.value = idStr;
+                    opt.textContent = clienteNome || `Cliente #${idStr}`;
+                    sel.appendChild(opt);
+                }
+                sel.value = idStr;
+            }
+
+            aplicarClienteSelecionadoOrcamento(clienteId, clienteNome) {
+                this.garantirOpcaoClienteOrcamentoSelect(clienteId, clienteNome);
+                const searchInput = document.getElementById('orcamento-cliente-search');
+                searchInput.value = '';
+                searchInput.disabled = true;
+                searchInput.style.opacity = '0.6';
+                searchInput.style.cursor = 'not-allowed';
+                searchInput.placeholder = 'Cliente selecionado — clique em × para alterar';
+                document.getElementById('orcamento-cliente-lista').style.display = 'none';
+                document.getElementById('orcamento-cliente-selecionado-nome').textContent = clienteNome || '';
+                document.getElementById('orcamento-cliente-selecionado-badge').style.display = 'block';
+                this.carregarAgendamentosClienteOrcamento(clienteId);
+            }
+
+            selecionarClienteOrcamento(clienteId, clienteNome) {
+                this.aplicarClienteSelecionadoOrcamento(clienteId, clienteNome);
+            }
+
+            limparClienteSelecionadoOrcamento() {
+                document.getElementById('orcamento-cliente').value = '';
+                const searchInput = document.getElementById('orcamento-cliente-search');
+                if (searchInput) {
+                    searchInput.disabled = false;
+                    searchInput.style.opacity = '1';
+                    searchInput.style.cursor = 'text';
+                    searchInput.placeholder = 'Digite o nome ou telefone do cliente...';
+                    searchInput.value = '';
+                }
+                const badge = document.getElementById('orcamento-cliente-selecionado-badge');
+                if (badge) badge.style.display = 'none';
+                const lista = document.getElementById('orcamento-cliente-lista');
+                if (lista) lista.style.display = 'none';
+                this.carregarAgendamentosClienteOrcamento('');
+                searchInput && searchInput.focus();
+            }
+
+            carregarVeiculosClienteOrcamento(clienteId) {
+                const select = document.getElementById('orcamento-veiculo-select');
+                if (!select) return;
+                select.innerHTML = '<option value="">Selecione um veículo (opcional se não houver cadastro)</option>';
+                if (!clienteId || clienteId === '' || clienteId === '0') {
+                    return;
+                }
+                this.reconstruirListaVeiculos();
+                const veiculos = this.dados.veiculos.filter(v => {
+                    const rawCid = v.clienteId ?? v.cliente_id;
+                    if (rawCid === undefined || rawCid === null || rawCid === '') return false;
+                    if (v.ativo === false) return false;
+                    return Number(rawCid) === Number(clienteId) || String(rawCid) === String(clienteId);
+                });
+                if (veiculos.length === 0) {
                     const option = document.createElement('option');
                     option.value = '';
-                    option.textContent = 'Nenhum agendamento disponível';
+                    option.textContent = 'Nenhum veículo cadastrado';
+                    option.disabled = true;
                     select.appendChild(option);
-                    document.getElementById('orcamento-veiculo-info').style.display = 'none';
                     return;
                 }
-                
+                veiculos.forEach(veiculo => {
+                    if (!veiculo.id && veiculo.id !== 0) return;
+                    const option = document.createElement('option');
+                    option.value = String(veiculo.id);
+                    option.textContent = `${veiculo.placa || 'N/A'} - ${veiculo.marca || ''} ${veiculo.modelo || ''}`.trim();
+                    select.appendChild(option);
+                });
+            }
+
+            sincronizarCamposVeiculoOrcamento() {
+                const agVal = document.getElementById('orcamento-agendamento').value;
+                const grupoVeiculo = document.getElementById('orcamento-veiculo-grupo');
+                const infoVeiculo = document.getElementById('orcamento-veiculo-info');
+                const clienteId = document.getElementById('orcamento-cliente').value;
+                if (agVal) {
+                    grupoVeiculo.style.display = 'none';
+                } else {
+                    infoVeiculo.style.display = 'none';
+                    if (clienteId) {
+                        grupoVeiculo.style.display = 'block';
+                    } else {
+                        grupoVeiculo.style.display = 'none';
+                    }
+                }
+            }
+
+            carregarAgendamentosClienteOrcamento(clienteId) {
+                const select = document.getElementById('orcamento-agendamento');
+                select.innerHTML = '';
+                const optAvulso = document.createElement('option');
+                optAvulso.value = '';
+                optAvulso.textContent = 'Sem agendamento (orçamento avulso)';
+                select.appendChild(optAvulso);
+
+                if (!clienteId) {
+                    document.getElementById('orcamento-veiculo-info').style.display = 'none';
+                    document.getElementById('orcamento-veiculo-grupo').style.display = 'none';
+                    return;
+                }
+
+                this.carregarVeiculosClienteOrcamento(clienteId);
+
+                // Buscar apenas agendamentos não finalizados do cliente
+                const agendamentos = this.dados.agendamentos.filter(a => {
+                    const ac = a.clienteId ?? a.cliente_id;
+                    return (Number(ac) === Number(clienteId) || String(ac) === String(clienteId)) &&
+                        a.status !== 'finalizado' &&
+                        a.status !== 'concluido';
+                });
+
                 agendamentos.forEach(agendamento => {
                     const veiculo = this.buscarVeiculoPorId(agendamento.veiculoId);
-                    const dataHora = agendamento.data 
-                        ? new Date(agendamento.data).toLocaleDateString('pt-BR') + 
+                    const dataHora = agendamento.data
+                        ? new Date(agendamento.data).toLocaleDateString('pt-BR') +
                           (agendamento.hora ? ' ' + agendamento.hora.substring(0, 5) : '')
                         : '-';
                     const veiculoInfo = veiculo ? `${veiculo.placa} - ${veiculo.marca} ${veiculo.modelo}` : 'N/A';
-                    
+
                     const option = document.createElement('option');
                     option.value = agendamento.id;
                     option.textContent = `${dataHora} - ${veiculoInfo} - ${agendamento.problema || 'Sem descrição'}`;
                     select.appendChild(option);
                 });
+
+                this.sincronizarCamposVeiculoOrcamento();
             }
 
             carregarDadosAgendamentoOrcamento(agendamentoId) {
                 if (!agendamentoId) {
                     document.getElementById('orcamento-veiculo-info').style.display = 'none';
+                    this.sincronizarCamposVeiculoOrcamento();
                     return;
                 }
-                
-                const agendamento = this.dados.agendamentos.find(a => a.id === parseInt(agendamentoId));
+
+                const agendamento = this.dados.agendamentos.find(a => a.id === parseInt(agendamentoId, 10));
                 if (!agendamento) {
                     document.getElementById('orcamento-veiculo-info').style.display = 'none';
+                    this.sincronizarCamposVeiculoOrcamento();
                     return;
                 }
-                
+
+                document.getElementById('orcamento-veiculo-grupo').style.display = 'none';
+
                 const veiculo = this.dados.veiculos.find(v => v.id === agendamento.veiculoId);
                 if (veiculo) {
-                    document.getElementById('orcamento-veiculo-display').value = 
+                    document.getElementById('orcamento-veiculo-display').value =
                         `${veiculo.placa} - ${veiculo.marca} ${veiculo.modelo} (${veiculo.ano || 'N/A'})`;
                     document.getElementById('orcamento-veiculo-info').style.display = 'block';
+                } else {
+                    document.getElementById('orcamento-veiculo-info').style.display = 'none';
                 }
-                
+
                 // Preencher observações com o problema do agendamento se estiver vazio
                 const observacoes = document.getElementById('orcamento-observacoes');
                 if (!observacoes.value.trim() && agendamento.problema) {
@@ -4919,13 +5244,37 @@
                         if (orcamento) {
                             try {
                                 await this.atualizarOrcamentoServidor(orcamento.id, { status: 'finalizado' });
-                            this.log(`Orçamento #${orcamento.numero} atualizado para Finalizado`, 'info');
+                                this.log(`Orçamento #${orcamento.numero} atualizado para Finalizado`, 'info');
                             } catch (error) {
                                 this.log(`Não foi possível atualizar o orçamento #${orcamento.numero}: ${error.message}`, 'warning');
                             }
                         }
                     }
-                    
+
+                    // Duplicata no financeiro somente após finalizar a O.S. (valor definitivo do orçamento)
+                    if (os.orcamentoId) {
+                        const orcParaDuplicata = this.dados.orcamentos.find(o => o.id === os.orcamentoId);
+                        if (orcParaDuplicata) {
+                            try {
+                                const okFinanceiro = await this.criarLancamentoDeOrcamento(orcParaDuplicata, {
+                                    origemFinalizacaoOS: true
+                                });
+                                if (okFinanceiro === false) {
+                                    alert(
+                                        'A O.S. e o orçamento foram finalizados, mas a duplicata não foi criada/atualizada (operação cancelada ou bloqueada).\n\n' +
+                                        'Registre ou ajuste o recebível manualmente no financeiro, se necessário.'
+                                    );
+                                }
+                            } catch (error) {
+                                this.log(`Erro ao gerar duplicata na finalização da O.S.: ${error.message}`, 'error');
+                                alert(
+                                    `O.S. finalizada, mas falhou ao gerar a duplicata no financeiro: ${error.message}\n\n` +
+                                    'Cadastre o lançamento manualmente no módulo financeiro.'
+                                );
+                            }
+                        }
+                    }
+
                     // Enviar mensagem automática para o cliente
                     setTimeout(() => {
                         this.enviarWhatsAppOS(os.id);
@@ -5274,13 +5623,14 @@
                 
                 // Aguardar um pouco para o modal abrir e então preencher os dados
                 setTimeout(() => {
-                    // Preencher dados do orçamento com informações do agendamento
-                    document.getElementById('orcamento-cliente').value = agendamento.clienteId;
-                    
-                    // Carregar agendamentos do cliente
-                    this.carregarAgendamentosClienteOrcamento(agendamento.clienteId);
-                    
-                    // Selecionar o agendamento atual
+                    const cliente = this.dados.clientes.find(c => c.id == agendamento.clienteId);
+                    if (cliente) {
+                        this.aplicarClienteSelecionadoOrcamento(cliente.id, cliente.nome);
+                    } else {
+                        document.getElementById('orcamento-cliente').value = agendamento.clienteId;
+                        this.carregarAgendamentosClienteOrcamento(agendamento.clienteId);
+                    }
+
                     setTimeout(() => {
                         document.getElementById('orcamento-agendamento').value = agendamentoId;
                         this.carregarDadosAgendamentoOrcamento(agendamentoId);
@@ -8663,9 +9013,9 @@ Obrigado pela confiança! 🙏`;
                     if (selectedId) {
                         const orcamento = this.dados.orcamentos.find(o => o.id === selectedId);
                         if (orcamento) {
-                            // Ocultar botão "Editar" se orçamento estiver aprovado ou recusado
+                            // Ocultar "Editar" para recusado, em serviço ou finalizado (aprovado pode editar para incluir itens)
                             if (btnEditar) {
-                                if (orcamento.status === 'aprovado' || orcamento.status === 'recusado') {
+                                if (orcamento.status === 'recusado' || orcamento.status === 'em-servico' || orcamento.status === 'finalizado') {
                                     btnEditar.style.display = 'none';
                                 } else {
                                     btnEditar.style.display = 'inline-block';
@@ -9241,16 +9591,24 @@ Obrigado pela confiança! 🙏`;
         function abrirModalOrcamento() {
             document.getElementById('modal-orcamento').style.display = 'block';
             document.getElementById('modal-orcamento').classList.remove('minimized');
-            document.getElementById('servicos-lista-container').innerHTML = '';
-            document.getElementById('pecas-lista-container').innerHTML = '';
-            document.getElementById('orcamento-agendamento').innerHTML = '<option value="">Selecione um agendamento</option>';
-            document.getElementById('orcamento-veiculo-info').style.display = 'none';
-            document.getElementById('servico-descricao-input').value = '';
-            document.getElementById('servico-valor-input').value = '';
-            document.getElementById('peca-nome-input').value = '';
-            document.getElementById('peca-qtde-input').value = '1';
-            document.getElementById('peca-valor-unitario-input').value = '';
-            document.getElementById('peca-total-input').value = '';
+            const formOrc = document.getElementById('form-orcamento');
+            const isEdicaoOrc = !!(formOrc && formOrc.dataset.editId);
+
+            if (!isEdicaoOrc) {
+                sistema.limparClienteSelecionadoOrcamento();
+                document.getElementById('servicos-lista-container').innerHTML = '';
+                document.getElementById('pecas-lista-container').innerHTML = '';
+                const selVei = document.getElementById('orcamento-veiculo-select');
+                if (selVei) selVei.innerHTML = '<option value="">Selecione um veículo</option>';
+                document.getElementById('orcamento-veiculo-grupo').style.display = 'none';
+                document.getElementById('orcamento-veiculo-info').style.display = 'none';
+                document.getElementById('servico-descricao-input').value = '';
+                document.getElementById('servico-valor-input').value = '';
+                document.getElementById('peca-nome-input').value = '';
+                document.getElementById('peca-qtde-input').value = '1';
+                document.getElementById('peca-valor-unitario-input').value = '';
+                document.getElementById('peca-total-input').value = '';
+            }
             sistema.atualizarTotalOrcamento();
         }
 
@@ -9260,8 +9618,17 @@ Obrigado pela confiança! 🙏`;
             document.getElementById('form-orcamento').reset();
             document.getElementById('servicos-lista-container').innerHTML = '';
             document.getElementById('pecas-lista-container').innerHTML = '';
-            document.getElementById('orcamento-agendamento').innerHTML = '<option value="">Selecione um agendamento</option>';
+            const selAgF = document.getElementById('orcamento-agendamento');
+            selAgF.innerHTML = '';
+            const optAvulsoF = document.createElement('option');
+            optAvulsoF.value = '';
+            optAvulsoF.textContent = 'Sem agendamento (orçamento avulso)';
+            selAgF.appendChild(optAvulsoF);
+            const selVeiF = document.getElementById('orcamento-veiculo-select');
+            if (selVeiF) selVeiF.innerHTML = '<option value="">Selecione um veículo</option>';
+            document.getElementById('orcamento-veiculo-grupo').style.display = 'none';
             document.getElementById('orcamento-veiculo-info').style.display = 'none';
+            sistema.limparClienteSelecionadoOrcamento();
             // Limpar estado de edição
             const form = document.getElementById('form-orcamento');
             delete form.dataset.editId;
