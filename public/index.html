@@ -1708,7 +1708,6 @@
                 if (Number.isNaN(d.getTime())) return s;
                 return d.toLocaleDateString('pt-BR');
             }
-
             gerarIdVeiculo(clienteId = 'novo', index = 0) {
                 return `veh-${clienteId}-${Date.now()}-${index}-${Math.floor(Math.random() * 1000)}`;
             }
@@ -3143,7 +3142,6 @@
                 try { fecharModalVisualizarOrcamento(); } catch (e) { /* ignore */ }
                 this.editarOrcamento(id);
             }
-
             visualizarOrcamento(id) {
                 const orcamento = this.dados.orcamentos.find(o => o.id === id);
                 if (!orcamento) {
