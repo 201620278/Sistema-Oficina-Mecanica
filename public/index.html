@@ -2805,10 +2805,22 @@
                         }
                     } else {
                         this.reconstruirListaVeiculos();
-                        const veiculoSel = document.getElementById('orcamento-veiculo-select').value;
-                        const parsedSel = veiculoSel ? parseInt(veiculoSel, 10) : NaN;
-                        if (veiculoSel !== '' && !Number.isNaN(parsedSel)) {
-                            veiculoId = parsedSel;
+                        const veiculoSelRaw = document.getElementById('orcamento-veiculo-select').value;
+                        const veiculoSel = veiculoSelRaw != null ? String(veiculoSelRaw).trim() : '';
+
+                        if (veiculoSel !== '') {
+                            const vSel = this.buscarVeiculoPorId(veiculoSel);
+                            if (!vSel) {
+                                throw new Error('Veículo selecionado não encontrado. Feche e abra o orçamento ou troque o cliente e escolha o veículo de novo.');
+                            }
+                            const rawCid = vSel.clienteId ?? vSel.cliente_id;
+                            const pertenceCliente = rawCid !== undefined && rawCid !== null && rawCid !== '' &&
+                                vSel.ativo !== false &&
+                                (Number(rawCid) === Number(clienteId) || String(rawCid) === String(clienteId));
+                            if (!pertenceCliente) {
+                                throw new Error('O veículo selecionado não pertence a este cliente.');
+                            }
+                            veiculoId = vSel.id;
                         } else {
                             const doCliente = (this.dados.veiculos || []).filter(v => {
                                 const rawCid = v.clienteId ?? v.cliente_id;

@@ -193,7 +193,9 @@ function inicializarBanco() {
             'ALTER TABLE agendamentos ADD COLUMN whatsapp_enviado INTEGER DEFAULT 0',
             'ALTER TABLE agendamentos ADD COLUMN lembrete_enviado INTEGER DEFAULT 0',
             'ALTER TABLE agendamentos ADD COLUMN data_finalizacao TEXT',
-            'ALTER TABLE agendamentos ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP'
+            'ALTER TABLE agendamentos ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP',
+            'ALTER TABLE agendamentos ADD COLUMN motivo_cancelamento TEXT',
+            'ALTER TABLE agendamentos ADD COLUMN cancelado_em TEXT'
         ];
 
         agendamentoColumnsToAdd.forEach(sql => {
@@ -236,7 +238,9 @@ function inicializarBanco() {
             'ALTER TABLE orcamentos ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP',
             'ALTER TABLE orcamentos ADD COLUMN status_financeiro TEXT',
             'ALTER TABLE orcamentos ADD COLUMN data_duplicata TEXT',
-            'ALTER TABLE orcamentos ADD COLUMN data_liquidacao TEXT'
+            'ALTER TABLE orcamentos ADD COLUMN data_liquidacao TEXT',
+            'ALTER TABLE orcamentos ADD COLUMN motivo_cancelamento TEXT',
+            'ALTER TABLE orcamentos ADD COLUMN cancelado_em TEXT'
         ];
 
         orcamentoColumnsToAdd.forEach(sql => {
@@ -1484,7 +1488,9 @@ app.post('/api/agendamentos', (req, res) => {
     const hora = agendamento.hora || '';
     const problema = agendamento.problema || agendamento.servico || '';
     const observacoes = agendamento.observacoes || '';
-    const status = agendamento.status || 'pendente';
+    const status = agendamento.status || 'agendado';
+    const motivoCancelamento = agendamento.motivoCancelamento ?? agendamento.motivo_cancelamento ?? null;
+    const canceladoEm = agendamento.canceladoEm ?? agendamento.cancelado_em ?? null;
     const whatsappEnviado = agendamento.whatsappEnviado || agendamento.whatsapp_enviado ? 1 : 0;
     const lembreteEnviado = agendamento.lembreteEnviado || agendamento.lembrete_enviado ? 1 : 0;
     const dataFinalizacao = agendamento.dataFinalizacao || agendamento.data_finalizacao || null;
@@ -1546,8 +1552,10 @@ app.post('/api/agendamentos', (req, res) => {
                 status,
                 whatsapp_enviado,
                 lembrete_enviado,
-                data_finalizacao
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                data_finalizacao,
+                motivo_cancelamento,
+                cancelado_em
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
         let sql;
         if (possuiIdCustomizado) {
@@ -1569,7 +1577,9 @@ app.post('/api/agendamentos', (req, res) => {
             status,
             whatsappEnviado,
             lembreteEnviado,
-            dataFinalizacao
+            dataFinalizacao,
+            motivoCancelamento,
+            canceladoEm
         ];
 
         console.log('SQL Inserção agendamento:', sql);
@@ -1665,6 +1675,8 @@ app.post('/api/orcamentos', (req, res) => {
     const desconto = orcamento.desconto !== undefined ? parseFloat(orcamento.desconto) : 0;
     const total = orcamento.total !== undefined ? parseFloat(orcamento.total) : parseFloat(orcamento.valor_total) || 0;
     const status = orcamento.status || 'pendente';
+    const motivoCancelamento = orcamento.motivoCancelamento ?? orcamento.motivo_cancelamento ?? null;
+    const canceladoEm = orcamento.canceladoEm ?? orcamento.cancelado_em ?? null;
 
     const inserirOrcamento = (numeroFinal) => {
         const baseSql = `(
@@ -1680,8 +1692,10 @@ app.post('/api/orcamentos', (req, res) => {
                 desconto,
                 valor_total,
                 total,
-                status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                status,
+                motivo_cancelamento,
+                cancelado_em
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
         let sql;
         if (possuiIdCustomizado) {
@@ -1704,7 +1718,9 @@ app.post('/api/orcamentos', (req, res) => {
             desconto,
             total,
             total,
-            status
+            status,
+            motivoCancelamento,
+            canceladoEm
         ];
 
         console.log('SQL Inserção orcamento:', sql);
@@ -2343,7 +2359,9 @@ app.put('/api/agendamentos/:id', (req, res) => {
     const hora = agendamento.hora || '';
     const problema = agendamento.problema || agendamento.servico || '';
     const observacoes = agendamento.observacoes || '';
-    const status = agendamento.status || 'pendente';
+    const status = agendamento.status || 'agendado';
+    const motivoCancelamento = agendamento.motivoCancelamento ?? agendamento.motivo_cancelamento ?? null;
+    const canceladoEm = agendamento.canceladoEm ?? agendamento.cancelado_em ?? null;
     const whatsappEnviado = agendamento.whatsappEnviado || agendamento.whatsapp_enviado ? 1 : 0;
     const lembreteEnviado = agendamento.lembreteEnviado || agendamento.lembrete_enviado ? 1 : 0;
     const dataFinalizacao = agendamento.dataFinalizacao || agendamento.data_finalizacao || null;
@@ -2362,6 +2380,8 @@ app.put('/api/agendamentos/:id', (req, res) => {
              whatsapp_enviado = ?,
              lembrete_enviado = ?,
              data_finalizacao = ?,
+             motivo_cancelamento = ?,
+             cancelado_em = ?,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
         [
@@ -2377,6 +2397,8 @@ app.put('/api/agendamentos/:id', (req, res) => {
             whatsappEnviado,
             lembreteEnviado,
             dataFinalizacao,
+            motivoCancelamento,
+            canceladoEm,
             id
         ],
         function(err) {
@@ -2447,6 +2469,8 @@ app.put('/api/orcamentos/:id', (req, res) => {
     const statusFinanceiro = orcamento.statusFinanceiro ?? orcamento.status_financeiro ?? null;
     const dataDuplicata = orcamento.dataDuplicata ?? orcamento.data_duplicata ?? null;
     const dataLiquidacao = orcamento.dataLiquidacao ?? orcamento.data_liquidacao ?? null;
+    const motivoCancelamento = orcamento.motivoCancelamento ?? orcamento.motivo_cancelamento ?? null;
+    const canceladoEm = orcamento.canceladoEm ?? orcamento.cancelado_em ?? null;
 
     db.run(
         `UPDATE orcamentos
@@ -2466,6 +2490,8 @@ app.put('/api/orcamentos/:id', (req, res) => {
              status_financeiro = ?,
              data_duplicata = ?,
              data_liquidacao = ?,
+             motivo_cancelamento = ?,
+             cancelado_em = ?,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?`,
         [
@@ -2485,6 +2511,8 @@ app.put('/api/orcamentos/:id', (req, res) => {
             statusFinanceiro,
             dataDuplicata,
             dataLiquidacao,
+            motivoCancelamento,
+            canceladoEm,
             id
         ],
         function(err) {

@@ -72,7 +72,7 @@
                     <div class="card-content">
                         <h3>Receber Hoje</h3>
                         <p class="amount" id="receber-hoje">R$ 0,00</p>
-                        <span class="trend positive">+0% vs ontem</span>
+                        <span class="trend positive" id="trend-receber-hoje">+0% vs ontem</span>
                     </div>
                 </div>
                 
@@ -83,7 +83,7 @@
                     <div class="card-content">
                         <h3>Pagar Hoje</h3>
                         <p class="amount" id="pagar-hoje">R$ 0,00</p>
-                        <span class="trend negative">-0% vs ontem</span>
+                        <span class="trend negative" id="trend-pagar-hoje">-0% vs ontem</span>
                     </div>
                 </div>
                 
@@ -94,7 +94,7 @@
                     <div class="card-content">
                         <h3>Saldo do Mês</h3>
                         <p class="amount" id="saldo-mes">R$ 0,00</p>
-                        <span class="trend positive">+0% vs último mês</span>
+                        <span class="trend positive" id="trend-saldo-mes">+0% vs último mês</span>
                     </div>
                 </div>
                 
@@ -105,7 +105,7 @@
                     <div class="card-content">
                         <h3>Inadimplência</h3>
                         <p class="amount" id="inadimplencia">0%</p>
-                        <span class="trend positive">-0% vs último mês</span>
+                        <span class="trend positive" id="trend-inadimplencia">-0% vs ontem</span>
                     </div>
                 </div>
             </div>
@@ -1054,6 +1054,55 @@
                 return this.normalizarId(id1) === this.normalizarId(id2);
             }
 
+            /** Converte vencimento/data para YYYY-MM-DD (local) ou null — evita falha por DD/MM/YYYY ou ISO com hora */
+            normalizarVencimentoISO(v) {
+                if (v == null || v === '') return null;
+                const s = String(v).trim();
+                let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+                if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+                m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+                if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+                const d = new Date(s);
+                if (!isNaN(d.getTime())) {
+                    const y = d.getFullYear();
+                    const mo = String(d.getMonth() + 1).padStart(2, '0');
+                    const da = String(d.getDate()).padStart(2, '0');
+                    return `${y}-${mo}-${da}`;
+                }
+                return null;
+            }
+
+            isItemPagoFinanceiro(it) {
+                if (!it) return false;
+                const st = (it.status || it.situacao || it.estado || '') + '';
+                const s = st.toString().toLowerCase();
+                return s === 'pago' || s === 'paid' || it.pago === true || it.confirmado === 1 || it.confirmado === '1' || it.dataPagamento || it.data_pagamento || it.confirmadoEm || it.confirmado_em;
+            }
+
+            getValorPagoItem(it) {
+                if (!it) return 0;
+                if (typeof it.valorPago !== 'undefined' && it.valorPago !== null) return Number(it.valorPago) || 0;
+                if (Array.isArray(it.historicoPagamentos)) return it.historicoPagamentos.reduce((s, h) => s + (Number(h.valor) || 0), 0);
+                if (it.observacoes) {
+                    try {
+                        const obs = typeof it.observacoes === 'string' ? JSON.parse(it.observacoes) : it.observacoes;
+                        if (obs && Array.isArray(obs.historicoPagamentos)) return obs.historicoPagamentos.reduce((s, h) => s + (Number(h.valor) || 0), 0);
+                    } catch (e) {}
+                }
+                return 0;
+            }
+
+            saldoRestanteItem(it) {
+                return Math.max(0, (Number(it?.valor) || 0) - this.getValorPagoItem(it));
+            }
+
+            /** Data civil local em YYYY-MM-DD (evita usar UTC de toISOString() no dashboard). */
+            dataLocalISO(d) {
+                const x = d ? new Date(d) : new Date();
+                if (isNaN(x.getTime())) return null;
+                return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+            }
+
             async init() {
                 // Inicializar arrays vazios se não existirem (localStorage compartilhado com index.html)
                 if (!localStorage.getItem(this.storageKeys.receber)) {
@@ -1581,7 +1630,7 @@
                 if (index && value !== null) {
                     items = items.filter(item => {
                         if (index === 'vencimento') {
-                            return item.vencimento === value;
+                            return this.normalizarVencimentoISO(item.vencimento || item.data) === value;
                         }
                         return item[index] === value;
                     });
@@ -1649,48 +1698,47 @@
             }
 
             async getTotalReceberHoje() {
-                const hoje = new Date().toISOString().split('T')[0];
-                const receber = await this.getAll('receber', 'vencimento', hoje);
+                const hoje = this.dataLocalISO();
+                const receber = await this.getAll('receber');
                 return receber
-                    .filter(r => r.status === 'aberto')
-                    .reduce((total, r) => total + (r.valor || 0), 0);
+                    .filter(r => !this.isItemPagoFinanceiro(r))
+                    .filter(r => this.normalizarVencimentoISO(r.vencimento || r.data) === hoje)
+                    .reduce((total, r) => total + this.saldoRestanteItem(r), 0);
             }
 
             async getTotalPagarHoje() {
-                const hoje = new Date().toISOString().split('T')[0];
-                const pagar = await this.getAll('pagar', 'vencimento', hoje);
-                const isPaid = (it) => {
-                    if (!it) return false;
-                    const st = (it.status || it.situacao || it.estado || '') + '';
-                    const s = st.toString().toLowerCase();
-                    return s === 'pago' || s === 'paid' || it.pago === true || it.confirmado === 1 || it.confirmado === '1' || it.dataPagamento || it.data_pagamento || it.confirmadoEm || it.confirmado_em;
-                };
-                const getValorPago = (it) => {
-                    if (!it) return 0;
-                    if (typeof it.valorPago !== 'undefined' && it.valorPago !== null) return Number(it.valorPago) || 0;
-                    if (Array.isArray(it.historicoPagamentos)) return it.historicoPagamentos.reduce((s, h) => s + (Number(h.valor) || 0), 0);
-                    if (it.observacoes) {
-                        try {
-                            const obs = typeof it.observacoes === 'string' ? JSON.parse(it.observacoes) : it.observacoes;
-                            if (obs && Array.isArray(obs.historicoPagamentos)) return obs.historicoPagamentos.reduce((s, h) => s + (Number(h.valor) || 0), 0);
-                        } catch (e) {}
-                    }
-                    return 0;
-                };
-                const saldoRestante = (it) => Math.max(0, (Number(it?.valor) || 0) - getValorPago(it));
+                const hoje = this.dataLocalISO();
+                const pagar = await this.getAll('pagar');
                 return pagar
-                    .filter(p => !isPaid(p))
-                    .reduce((total, p) => total + saldoRestante(p), 0);
+                    .filter(p => !this.isItemPagoFinanceiro(p))
+                    .filter(p => this.normalizarVencimentoISO(p.vencimento || p.data) === hoje)
+                    .reduce((total, p) => total + this.saldoRestanteItem(p), 0);
+            }
+
+            async getTotalReceberNaData(iso) {
+                const receber = await this.getAll('receber');
+                return receber
+                    .filter(r => !this.isItemPagoFinanceiro(r))
+                    .filter(r => this.normalizarVencimentoISO(r.vencimento || r.data) === iso)
+                    .reduce((s, r) => s + this.saldoRestanteItem(r), 0);
+            }
+
+            async getTotalPagarNaData(iso) {
+                const pagar = await this.getAll('pagar');
+                return pagar
+                    .filter(p => !this.isItemPagoFinanceiro(p))
+                    .filter(p => this.normalizarVencimentoISO(p.vencimento || p.data) === iso)
+                    .reduce((s, p) => s + this.saldoRestanteItem(p), 0);
             }
 
             async getVencimentosHoje() {
-                const hoje = new Date().toISOString().split('T')[0];
+                const hoje = this.dataLocalISO();
                 const receber = await this.getAll('receber', 'vencimento', hoje);
                 const pagar = await this.getAll('pagar', 'vencimento', hoje);
                 
                 return {
-                    receber: receber.filter(r => r.status === 'aberto'),
-                    pagar: pagar.filter(p => (p.status || '').toLowerCase() !== 'pago')
+                    receber: receber.filter(r => !this.isItemPagoFinanceiro(r)),
+                    pagar: pagar.filter(p => !this.isItemPagoFinanceiro(p))
                 };
             }
 
@@ -1717,22 +1765,18 @@
                 for (let i = 0; i < 7; i++) {
                     const data = new Date(hoje);
                     data.setDate(hoje.getDate() + i);
-                    const dataStr = data.toISOString().split('T')[0];
+                    const dataStr = this.dataLocalISO(data);
                     
                     const receber = await this.getAll('receber', 'vencimento', dataStr);
                     const pagar = await this.getAll('pagar', 'vencimento', dataStr);
                     
                     const totalReceber = receber
-                        .filter(r => r.status === 'aberto')
-                        .reduce((sum, r) => sum + (r.valor || 0), 0);
+                        .filter(r => !this.isItemPagoFinanceiro(r))
+                        .reduce((sum, r) => sum + this.saldoRestanteItem(r), 0);
                         
                     const totalPagar = pagar
-                        .filter(p => (p.status || '').toLowerCase() !== 'pago')
-                        .reduce((sum, p) => {
-                            const valor = Number(p.valor) || 0;
-                            const valorPago = (typeof p.valorPago !== 'undefined' && p.valorPago !== null) ? (Number(p.valorPago) || 0) : (Array.isArray(p.historicoPagamentos) ? p.historicoPagamentos.reduce((s, h) => s + (Number(h.valor) || 0), 0) : 0);
-                            return sum + Math.max(0, valor - valorPago);
-                        }, 0);
+                        .filter(p => !this.isItemPagoFinanceiro(p))
+                        .reduce((sum, p) => sum + this.saldoRestanteItem(p), 0);
                     
                     fluxo.push({
                         data: dataStr,
@@ -2466,45 +2510,161 @@
 
             // Dados vêm do index.html via localStorage, não precisa criar exemplos
 
-            async carregarDadosDashboard() {
-                const receberHoje = await this.db.getTotalReceberHoje();
-                const pagarHoje = await this.db.getTotalPagarHoje();
-                
-                document.getElementById('receber-hoje').textContent = 
-                    this.formatarMoeda(receberHoje);
-                document.getElementById('pagar-hoje').textContent = 
-                    this.formatarMoeda(pagarHoje);
-                
-                // Saldo do mês: total de receber (aberto + pago) menos total de pagar (aberto + pago)
-                const receber = await this.db.getAll('receber');
-                const pagar = await this.db.getAll('pagar');
-                
-                const totalReceber = receber.reduce((sum, r) => sum + (r.valor || 0), 0);
-                const totalPagar = pagar.reduce((sum, p) => sum + (p.valor || 0), 0);
-                const saldoMes = totalReceber - totalPagar;
-                
-                document.getElementById('saldo-mes').textContent = 
-                    this.formatarMoeda(saldoMes);
-                
-                // Calcular inadimplência: (aberto atrasado / aberto total) * 100
-                const atraso = receber.filter(r => (r.status || '').toLowerCase() === 'atrasado').length;
-                const aberto = receber.filter(r => (r.status || '').toLowerCase() === 'aberto' || (r.status || '').toLowerCase() === 'atrasado').length;
-                const percentualInadimplencia = aberto > 0 ? Math.round((atraso / aberto) * 100) : 0;
-                
-                document.getElementById('inadimplencia').textContent = 
-                    `${percentualInadimplencia}%`;
-                
-                // Atualizar gráfico de inadimplência
-                this.atualizarGraficoInadimplencia(atraso, aberto - atraso);
-                
-                // Carregar vencimentos hoje
-                const vencimentos = await this.db.getVencimentosHoje();
-                this.atualizarVencimentosHoje(vencimentos);
-                
-                // ...existing code...
+            _saldoMesPendente(receber, pagar, db, prefixMes) {
+                // Saldo do mês considera tudo que movimenta o caixa no mês:
+                // - recebimentos: valor pago (se já pago) ou saldo pendente (se em aberto)
+                // - pagamentos: valor pago (se já pago) ou saldo pendente (se em aberto)
+                // A data de referência é: dataPagamento (se existir) senão vencimento/data.
+                const emMes = (iso) => iso && iso.startsWith(prefixMes);
+                const dataRef = (it) => {
+                    const dPag = it.dataPagamento || it.data_pagamento;
+                    const base = dPag || it.vencimento || it.data;
+                    return db.normalizarVencimentoISO(base);
+                };
+                let s = 0;
+                for (const r of receber) {
+                    const iso = dataRef(r);
+                    if (!emMes(iso)) continue;
+                    const val = db.isItemPagoFinanceiro(r) ? db.getValorPagoItem(r) : db.saldoRestanteItem(r);
+                    s += val;
+                }
+                for (const p of pagar) {
+                    const iso = dataRef(p);
+                    if (!emMes(iso)) continue;
+                    const val = db.isItemPagoFinanceiro(p) ? db.getValorPagoItem(p) : db.saldoRestanteItem(p);
+                    s -= val;
+                }
+                return s;
             }
 
-            // ...existing code...
+            _percentualInadimplenciaValor(receber, db, limiteISO) {
+                let valorAberto = 0;
+                let valorAtrasado = 0;
+                for (const r of receber) {
+                    if (db.isItemPagoFinanceiro(r)) continue;
+                    const saldo = db.saldoRestanteItem(r);
+                    valorAberto += saldo;
+                    const ven = db.normalizarVencimentoISO(r.vencimento || r.data);
+                    if (ven && ven < limiteISO) valorAtrasado += saldo;
+                }
+                const pct = valorAberto > 0 ? Math.round((valorAtrasado / valorAberto) * 100) : 0;
+                return { pct, valorAberto, valorAtrasado, valorEmDia: Math.max(0, valorAberto - valorAtrasado) };
+            }
+
+            _setTrend(elId, prevVal, currVal, higherIsWorse, labelPeriodo) {
+                const el = document.getElementById(elId);
+                if (!el) return;
+                const suf = labelPeriodo || 'vs período anterior';
+                let pct = 0;
+                if (prevVal === 0 && currVal === 0) pct = 0;
+                else if (prevVal === 0) pct = currVal !== 0 ? 100 : 0;
+                else pct = Math.round(((currVal - prevVal) / Math.abs(prevVal)) * 1000) / 10;
+                const sign = pct > 0 ? '+' : '';
+                const good = higherIsWorse ? pct <= 0 : pct >= 0;
+                el.className = `trend ${good ? 'positive' : 'negative'}`;
+                el.textContent = `${sign}${pct}% ${suf}`;
+            }
+
+            /** Tendência para taxas 0–100%: mostra variação em pontos percentuais (evita divisão por zero). */
+            _setTrendPontosPercentuais(elId, prevPct, currPct, higherIsWorse, labelPeriodo) {
+                const el = document.getElementById(elId);
+                if (!el) return;
+                const suf = labelPeriodo || 'vs período anterior';
+                const diff = Math.round((currPct - prevPct) * 10) / 10;
+                const sign = diff > 0 ? '+' : '';
+                const good = higherIsWorse ? diff <= 0 : diff >= 0;
+                el.className = `trend ${good ? 'positive' : 'negative'}`;
+                el.textContent = `${sign}${diff} p.p. ${suf}`;
+            }
+
+            atualizarGraficoInadimplencia(valorAtrasado, valorEmDia) {
+                const canvas = document.getElementById('inadimplencia-chart');
+                if (!canvas || typeof Chart === 'undefined') return;
+                const ctx = canvas.getContext('2d');
+                const a = Number(valorAtrasado) || 0;
+                const b = Number(valorEmDia) || 0;
+                if (this._inadChart) {
+                    this._inadChart.data.datasets[0].data = [a, b];
+                    this._inadChart.update();
+                    return;
+                }
+                this._inadChart = new Chart(ctx, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['Em atraso (R$)', 'Em dia (R$)'],
+                        datasets: [{
+                            data: [a, b],
+                            backgroundColor: ['rgba(231, 76, 60, 0.85)', 'rgba(39, 174, 96, 0.85)'],
+                            borderWidth: 0
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { position: 'bottom' },
+                            tooltip: {
+                                callbacks: {
+                                    label: (c) => {
+                                        const v = Number(c.raw) || 0;
+                                        return `${c.label}: ${new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(v)}`;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            async carregarDadosDashboard() {
+                const db = this.db;
+                const hojeISO = db.dataLocalISO();
+                const dOntem = new Date();
+                dOntem.setDate(dOntem.getDate() - 1);
+                const ontemISO = db.dataLocalISO(dOntem);
+
+                const receberHoje = await db.getTotalReceberHoje();
+                const pagarHoje = await db.getTotalPagarHoje();
+
+                document.getElementById('receber-hoje').textContent = this.formatarMoeda(receberHoje);
+                document.getElementById('pagar-hoje').textContent = this.formatarMoeda(pagarHoje);
+
+                const receberOntem = await db.getTotalReceberNaData(ontemISO);
+                const pagarOntem = await db.getTotalPagarNaData(ontemISO);
+                this._setTrend('trend-receber-hoje', receberOntem, receberHoje, false, 'vs ontem');
+                this._setTrend('trend-pagar-hoje', pagarOntem, pagarHoje, true, 'vs ontem');
+
+                const receber = await db.getAll('receber');
+                const pagar = await db.getAll('pagar');
+
+                const now = new Date();
+                const curY = now.getFullYear();
+                const curM = now.getMonth() + 1;
+                let prevY = curY;
+                let prevM = curM - 1;
+                if (prevM === 0) {
+                    prevM = 12;
+                    prevY--;
+                }
+                const prefixMes = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
+
+                const saldoMes = this._saldoMesPendente(receber, pagar, db, prefixMes(curY, curM));
+                const saldoMesPrev = this._saldoMesPendente(receber, pagar, db, prefixMes(prevY, prevM));
+
+                document.getElementById('saldo-mes').textContent = this.formatarMoeda(saldoMes);
+                this._setTrend('trend-saldo-mes', saldoMesPrev, saldoMes, false, 'vs último mês');
+
+                const inadHoje = this._percentualInadimplenciaValor(receber, db, hojeISO);
+                const inadOntem = this._percentualInadimplenciaValor(receber, db, ontemISO);
+
+                document.getElementById('inadimplencia').textContent = `${inadHoje.pct}%`;
+                this._setTrendPontosPercentuais('trend-inadimplencia', inadOntem.pct, inadHoje.pct, true, 'vs ontem');
+
+                this.atualizarGraficoInadimplencia(inadHoje.valorAtrasado, inadHoje.valorEmDia);
+
+                const vencimentos = await db.getVencimentosHoje();
+                this.atualizarVencimentosHoje(vencimentos);
+            }
 
             atualizarUltimosRecebimentos(recebimentos) {
                 const container = document.getElementById('ultimos-recebimentos');
