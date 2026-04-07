@@ -64,15 +64,15 @@
         <div class="dashboard active" id="dashboard-section">
             <h2>Dashboard Financeiro</h2>
             
-            <div class="summary-cards">
+            <div class="summary-cards summary-cards-financeiro">
                 <div class="card card-receber">
                     <div class="card-icon">
                         <i class="fas fa-arrow-down"></i>
                     </div>
                     <div class="card-content">
-                        <h3>Receber Hoje</h3>
-                        <p class="amount" id="receber-hoje">R$ 0,00</p>
-                        <span class="trend positive" id="trend-receber-hoje">+0% vs ontem</span>
+                        <h3>Recebido em <span id="mes-recebido-dashboard">-</span></h3>
+                        <p class="amount" id="recebido-mes-dashboard">R$ 0,00</p>
+                        <span class="trend positive" id="trend-recebido-mes-dashboard">até a data atual</span>
                     </div>
                 </div>
                 
@@ -81,31 +81,20 @@
                         <i class="fas fa-arrow-up"></i>
                     </div>
                     <div class="card-content">
-                        <h3>Pagar Hoje</h3>
-                        <p class="amount" id="pagar-hoje">R$ 0,00</p>
-                        <span class="trend negative" id="trend-pagar-hoje">-0% vs ontem</span>
+                        <h3>Pago em <span id="mes-pago-dashboard">-</span></h3>
+                        <p class="amount" id="pago-mes-dashboard">R$ 0,00</p>
+                        <span class="trend negative" id="trend-pago-mes-dashboard">até a data atual</span>
                     </div>
                 </div>
-                
-                <div class="card card-saldo">
+
+                <div class="card card-saldo card-saldo-mes">
                     <div class="card-icon">
                         <i class="fas fa-wallet"></i>
                     </div>
                     <div class="card-content">
-                        <h3>Saldo do Mês</h3>
+                        <h3>Saldo de <span id="mes-saldo-dashboard">-</span></h3>
                         <p class="amount" id="saldo-mes">R$ 0,00</p>
                         <span class="trend positive" id="trend-saldo-mes">+0% vs último mês</span>
-                    </div>
-                </div>
-                
-                <div class="card card-inadimplencia">
-                    <div class="card-icon">
-                        <i class="fas fa-exclamation-triangle"></i>
-                    </div>
-                    <div class="card-content">
-                        <h3>Inadimplência</h3>
-                        <p class="amount" id="inadimplencia">0%</p>
-                        <span class="trend positive" id="trend-inadimplencia">-0% vs ontem</span>
                     </div>
                 </div>
             </div>
@@ -115,11 +104,24 @@
                     <h3>Inadimplência</h3>
                     <canvas id="inadimplencia-chart" style="max-height: 250px;"></canvas>
                 </div>
-                
-                <div class="vencimentos-container">
-                    <h3>Vencimentos Hoje</h3>
-                    <div class="vencimentos-list" id="vencimentos-hoje">
-                        <!-- Carregado via JS -->
+
+                <div class="dashboard-side">
+                    <div class="card card-inadimplencia dashboard-inad-card">
+                        <div class="card-icon">
+                            <i class="fas fa-exclamation-triangle"></i>
+                        </div>
+                        <div class="card-content">
+                            <h3>Inadimplência</h3>
+                            <p class="amount" id="inadimplencia">0%</p>
+                            <span class="trend positive" id="trend-inadimplencia">-0% vs ontem</span>
+                        </div>
+                    </div>
+
+                    <div class="vencimentos-container">
+                        <h3>Vencimentos Hoje</h3>
+                        <div class="vencimentos-list" id="vencimentos-hoje">
+                            <!-- Carregado via JS -->
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1089,7 +1091,8 @@
                         if (obs && Array.isArray(obs.historicoPagamentos)) return obs.historicoPagamentos.reduce((s, h) => s + (Number(h.valor) || 0), 0);
                     } catch (e) {}
                 }
-                return 0;
+                // Fallback: quando o item está quitado e não há histórico/valorPago, considerar o valor total.
+                return this.isItemPagoFinanceiro(it) ? (Number(it.valor) || 0) : 0;
             }
 
             saldoRestanteItem(it) {
@@ -1121,8 +1124,12 @@
                             const dados = await response.json();
                             console.log('Dados sincronizados do servidor:', dados);
                             
-                            // Separar por tipo
-                            const receber = dados.filter(d => d.tipo === 'receber').map(d => {
+                            // Separar por tipo (aceitar também "receita" vindo do módulo principal)
+                            const isTipoReceber = (t) => {
+                                const s = String(t || '').toLowerCase().trim();
+                                return s === 'receber' || s === 'receita';
+                            };
+                            const receber = dados.filter(d => isTipoReceber(d.tipo)).map(d => {
                                 let hist = [];
                                 if (Array.isArray(d.historicoPagamentos)) {
                                     hist = d.historicoPagamentos;
@@ -1134,6 +1141,7 @@
                                 }
                                 return {
                                     ...d,
+                                    tipo: 'receber',
                                     id: String(d.id),
                                     historicoPagamentos: hist
                                 };
@@ -2415,6 +2423,8 @@
                 // Checar IDs duplicados no DOM (ajuda diagnóstico)
                 try { this.warnDuplicateIds(); } catch(e){}
                 this.carregarReceber();
+                // Garante que os cards do dashboard sejam preenchidos já na primeira carga.
+                try { await this.carregarDadosDashboard(); } catch (e) { console.warn('Falha ao carregar dashboard na inicialização:', e); }
             }
 
             // Migração: preenche campo `fornecedor` em itens de 'pagar' quando ausente
@@ -2630,23 +2640,22 @@
                 dOntem.setDate(dOntem.getDate() - 1);
                 const ontemISO = db.dataLocalISO(dOntem);
 
-                const receberHoje = await db.getTotalReceberHoje();
-                const pagarHoje = await db.getTotalPagarHoje();
-
-                document.getElementById('receber-hoje').textContent = this.formatarMoeda(receberHoje);
-                document.getElementById('pagar-hoje').textContent = this.formatarMoeda(pagarHoje);
-
-                const receberOntem = await db.getTotalReceberNaData(ontemISO);
-                const pagarOntem = await db.getTotalPagarNaData(ontemISO);
-                this._setTrend('trend-receber-hoje', receberOntem, receberHoje, false, 'vs ontem');
-                this._setTrend('trend-pagar-hoje', pagarOntem, pagarHoje, true, 'vs ontem');
-
-                const receber = await db.getAll('receber');
-                const pagar = await db.getAll('pagar');
-
                 const now = new Date();
                 const curY = now.getFullYear();
                 const curM = now.getMonth() + 1;
+                const nomesMeses = ['Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
+                const nomeMesAtual = nomesMeses[curM - 1] || String(curM);
+                const elMesRecebido = document.getElementById('mes-recebido-dashboard');
+                const elMesPago = document.getElementById('mes-pago-dashboard');
+                const elMesSaldo = document.getElementById('mes-saldo-dashboard');
+                if (elMesRecebido) elMesRecebido.textContent = nomeMesAtual;
+                if (elMesPago) elMesPago.textContent = nomeMesAtual;
+                if (elMesSaldo) elMesSaldo.textContent = nomeMesAtual;
+
+                const receber = await db.getAll('receber');
+                const pagar = await db.getAll('pagar');
+                const mesAtualPrefixo = `${curY}-${String(curM).padStart(2, '0')}`;
+                const inicioMesISO = `${mesAtualPrefixo}-01`;
                 let prevY = curY;
                 let prevM = curM - 1;
                 if (prevM === 0) {
@@ -2655,7 +2664,32 @@
                 }
                 const prefixMes = (y, m) => `${y}-${String(m).padStart(2, '0')}`;
 
-                const saldoMes = this._saldoMesPendente(receber, pagar, db, prefixMes(curY, curM));
+                const dataPagamentoISO = (it) => {
+                    const base = it.dataPagamento || it.data_pagamento || it.confirmadoEm || it.confirmado_em || it.data;
+                    return db.normalizarVencimentoISO(base);
+                };
+                const noMesAteHoje = (iso) => !!iso && iso >= inicioMesISO && iso <= hojeISO;
+
+                const recebidoMes = (receber || []).reduce((acc, r) => {
+                    if (!db.isItemPagoFinanceiro(r)) return acc;
+                    const iso = dataPagamentoISO(r);
+                    if (!noMesAteHoje(iso)) return acc;
+                    return acc + (db.getValorPagoItem(r) || 0);
+                }, 0);
+
+                const pagoMes = (pagar || []).reduce((acc, p) => {
+                    if (!db.isItemPagoFinanceiro(p)) return acc;
+                    const iso = dataPagamentoISO(p);
+                    if (!noMesAteHoje(iso)) return acc;
+                    return acc + (db.getValorPagoItem(p) || 0);
+                }, 0);
+
+                const elRecebidoMes = document.getElementById('recebido-mes-dashboard');
+                const elPagoMes = document.getElementById('pago-mes-dashboard');
+                if (elRecebidoMes) elRecebidoMes.textContent = this.formatarMoeda(recebidoMes);
+                if (elPagoMes) elPagoMes.textContent = this.formatarMoeda(pagoMes);
+
+                const saldoMes = recebidoMes - pagoMes;
                 const saldoMesPrev = this._saldoMesPendente(receber, pagar, db, prefixMes(prevY, prevM));
 
                 document.getElementById('saldo-mes').textContent = this.formatarMoeda(saldoMes);
@@ -2673,11 +2707,38 @@
                 this.atualizarVencimentosHoje(vencimentos);
             }
 
+            atualizarVencimentosHoje(vencimentos) {
+                const container = document.getElementById('vencimentos-hoje');
+                if (!container) return;
+                const lista = Array.isArray(vencimentos) ? vencimentos : [];
+                if (lista.length === 0) {
+                    container.innerHTML = '<div class="text-center">Nenhum vencimento hoje</div>';
+                    return;
+                }
+
+                const clientes = this.db.getAllSync('clientes');
+                container.innerHTML = lista.slice(0, 8).map(item => {
+                    const clienteId = item.clienteId || item.cliente_id || item.cliente;
+                    const cliente = clientes.find(c => String(c.id) === String(clienteId));
+                    const nome = (cliente && cliente.nome) || item.cliente || 'Cliente';
+                    const valor = Number(item.valor) || 0;
+                    return `
+                        <div class="vencimento-item">
+                            <div class="vencimento-info">
+                                <h4>${nome}</h4>
+                                <span>${item.descricao || 'Lançamento financeiro'}</span>
+                            </div>
+                            <div class="vencimento-valor">${this.formatarMoeda(valor)}</div>
+                        </div>
+                    `;
+                }).join('');
+            }
+
             atualizarUltimosRecebimentos(recebimentos) {
                 const container = document.getElementById('ultimos-recebimentos');
                 let html = '';
                 // Buscar todos os clientes do localStorage
-                const clientes = this.getAllSync('clientes');
+                const clientes = this.db.getAllSync('clientes');
                 recebimentos.forEach(item => {
                     let nomeCliente = '';
                     // Tenta encontrar o cliente pelo id
@@ -5006,7 +5067,11 @@
             
             // Atualizar dados da seção
             if (sectionId === 'dashboard') {
-                await ui.carregarDadosDashboard();
+                try {
+                    await ui.carregarDadosDashboard();
+                } catch (e) {
+                    console.error('Erro ao carregar dashboard:', e);
+                }
                 // ATUALIZAR STATUS DOS VENCIMENTOS
                 try { await ui.atualizarStatusVencimentosPersistente(); } catch (e) { console.warn('Erro ao atualizar status de vencimentos:', e); }
             } else if (sectionId === 'receber') {
