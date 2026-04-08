@@ -1789,7 +1789,8 @@ app.post('/api/orcamentos', (req, res) => {
     function proceedOrcamentoAfterIdCheck() {
         // Heurística anti-duplicação: evitar criar orcamento duplicado (cliente + data + valor_total)
         if (clienteId && dataOrcamento) {
-            db.get('SELECT * FROM orcamentos WHERE cliente_id = ? AND data = ? AND valor_total = ? LIMIT 1', [clienteId, dataOrcamento, total], (dupErr, dupRow) => {
+            // Arredondar para 2 casas evita divergência por precisão de float
+            db.get('SELECT * FROM orcamentos WHERE cliente_id = ? AND data = ? AND ROUND(valor_total, 2) = ROUND(?, 2) LIMIT 1', [clienteId, dataOrcamento, total], (dupErr, dupRow) => {
                 if (dupErr) {
                     res.status(500).json({ error: dupErr.message });
                     return;

@@ -2774,20 +2774,71 @@
                 
                 const total = dados.total !== undefined ? dados.total : (totalServicos + totalPecas);
 
-                const payload = this.criarPayloadOrcamento({
-                    ...dados,
-                    numero: numeroOrcamento,
-                    total,
-                    data: dados.data || new Date().toISOString().split('T')[0],
-                    status: dados.status || 'pendente'
+                const dataOrcamento = dados.data || new Date().toISOString().split('T')[0];
+                const clienteId = dados.clienteId ?? dados.cliente_id ?? null;
+                const veiculoId = dados.veiculoId ?? dados.veiculo_id ?? null;
+                const totalRounded = Number((Number(total) || 0).toFixed(2));
+                const lockKey = `cliente:${String(clienteId)}|data:${String(dataOrcamento)}|veiculo:${String(veiculoId)}|total:${totalRounded}`;
+
+                // Bloqueio anti-duplicidade em paralelo (ex: duplo clique) e checagem por igualdade aproximada
+                this._pendingOrcamentoRequests = this._pendingOrcamentoRequests || {};
+                if (this._pendingOrcamentoRequests[lockKey]) {
+                    return await this._pendingOrcamentoRequests[lockKey];
+                }
+
+                const jaExiste = Array.isArray(this.dados.orcamentos) && this.dados.orcamentos.some(o => {
+                    const oCliente = o.clienteId ?? o.cliente_id;
+                    const oData = o.data ?? o.created_at;
+                    const oVeiculo = o.veiculoId ?? o.veiculo_id;
+                    const oTotal = Number(o.total ?? o.valor_total ?? 0);
+                    return (
+                        String(oCliente) === String(clienteId) &&
+                        String(oData) === String(dataOrcamento) &&
+                        String(oVeiculo) === String(veiculoId) &&
+                        Number(oTotal.toFixed(2)) === totalRounded
+                    );
                 });
 
-                const criado = await this.apiRequest('/orcamentos', { method: 'POST', data: payload });
-                const normalizado = this.normalizarOrcamento(criado);
-                this.dados.orcamentos.push(normalizado);
-                this.salvarDados('orcamentos');
-                this.log(`Orçamento #${normalizado.numero} gerado com sucesso`, 'success');
-                return normalizado;
+                if (jaExiste) {
+                    const encontrado = this.dados.orcamentos.find(o => {
+                        const oCliente = o.clienteId ?? o.cliente_id;
+                        const oData = o.data ?? o.created_at;
+                        const oVeiculo = o.veiculoId ?? o.veiculo_id;
+                        const oTotal = Number(o.total ?? o.valor_total ?? 0);
+                        return (
+                            String(oCliente) === String(clienteId) &&
+                            String(oData) === String(dataOrcamento) &&
+                            String(oVeiculo) === String(veiculoId) &&
+                            Number(oTotal.toFixed(2)) === totalRounded
+                        );
+                    });
+                    this.log('Orçamento já existe (evitando duplicidade).', 'info');
+                    return encontrado || null;
+                }
+
+                const promise = (async () => {
+                    const payload = this.criarPayloadOrcamento({
+                        ...dados,
+                        numero: numeroOrcamento,
+                        total,
+                        data: dataOrcamento,
+                        status: dados.status || 'pendente'
+                    });
+
+                    const criado = await this.apiRequest('/orcamentos', { method: 'POST', data: payload });
+                    const normalizado = this.normalizarOrcamento(criado);
+                    this.dados.orcamentos.push(normalizado);
+                    this.salvarDados('orcamentos');
+                    this.log(`Orçamento #${normalizado.numero} gerado com sucesso`, 'success');
+                    return normalizado;
+                })();
+
+                this._pendingOrcamentoRequests[lockKey] = promise;
+                try {
+                    return await promise;
+                } finally {
+                    delete this._pendingOrcamentoRequests[lockKey];
+                }
             }
 
             async gerarOrcamento() {
@@ -4082,6 +4133,20 @@
                         // Validar veiculoId antes de criar payload
                         if (!veiculoId || veiculoId === '0' || veiculoId === '') {
                             throw new Error('Veículo é obrigatório. Selecione um veículo válido.');
+                        }
+
+                        // Proteção extra contra duplicidade no cliente:
+                        // se já existir agendamento com mesmo cliente + data + hora, não criar outro
+                        const existeDuplicado = Array.isArray(this.dados.agendamentos)
+                            ? this.dados.agendamentos.some(a =>
+                                String(a.clienteId || a.cliente_id) === String(clienteId) &&
+                                String(a.data).split('T')[0] === String(data) &&
+                                String(a.hora || '').slice(0,5) === String(hora || '').slice(0,5)
+                            )
+                            : false;
+                        if (existeDuplicado) {
+                            alert('Já existe um agendamento para este cliente nesta data e horário. O sistema não criará outro igual.');
+                            return false;
                         }
 
                         console.log('Criando agendamento com dados:', {
@@ -5812,7 +5877,18 @@
 
             async marcarEmServico() {
                 if (!state.currentAgendamentoId) return;
-                
+
+                // Regra de negócio: só pode colocar agendamento "Em Serviço"
+                // se existir uma Ordem de Serviço vinculada em serviço
+                const agendamentoLigado = this.dados.agendamentos.find(a => a.id === state.currentAgendamentoId);
+                if (agendamentoLigado) {
+                    const osVinculada = this.dados.ordensServico.find(o => o.agendamentoId === agendamentoLigado.id);
+                    if (!osVinculada || osVinculada.status !== 'em-servico') {
+                        alert('Este agendamento só pode ir para "Em Serviço" quando a Ordem de Serviço vinculada estiver em serviço.');
+                        return;
+                    }
+                }
+
                 try {
                     const agendamento = await this.atualizarAgendamentoServidor(state.currentAgendamentoId, { status: 'em-servico' });
                     this.atualizarAgendamentos();
