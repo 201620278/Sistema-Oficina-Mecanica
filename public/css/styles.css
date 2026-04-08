@@ -318,12 +318,12 @@ input:focus, select:focus, textarea:focus { outline: none; border-color: var(--s
 
 /* Cards */
 .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin-bottom: 30px; }
-.summary-cards-financeiro { grid-template-columns: repeat(2, minmax(260px, 1fr)); max-width: 920px; }
-.card-saldo-mes { grid-column: 1 / -1; max-width: 520px; margin: 0 auto; width: 100%; }
+.summary-cards-financeiro { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); max-width: 1040px; }
+.card-saldo-mes { max-width: none; margin: 0; width: auto; }
 .card { background: white; border-radius: 10px; padding: 20px; display: flex; align-items: center; gap: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: transform 0.3s; }
 .card:hover { transform: translateY(-5px); }
 .card-icon { width: 60px; height: 60px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: white; }
-.card-receber .card-icon { background: var(--success-color); }
+.card-dashboard-recebido-mes .card-icon { background: var(--success-color); }
 .card-pagar .card-icon { background: var(--danger-color); }
 .card-saldo .card-icon { background: var(--secondary-color); }
 .card-inadimplencia .card-icon { background: var(--warning-color); }

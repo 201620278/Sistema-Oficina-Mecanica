@@ -65,17 +65,17 @@
             <h2>Dashboard Financeiro</h2>
             
             <div class="summary-cards summary-cards-financeiro">
-                <div class="card card-receber">
+                <div class="card card-dashboard-recebido-mes" id="dfx-dash-card-recebido-mes">
                     <div class="card-icon">
-                        <i class="fas fa-arrow-down"></i>
+                        <i class="fas fa-hand-holding-usd"></i>
                     </div>
                     <div class="card-content">
-                        <h3>Recebido em <span id="mes-recebido-dashboard">-</span></h3>
-                        <p class="amount" id="recebido-mes-dashboard">R$ 0,00</p>
-                        <span class="trend positive" id="trend-recebido-mes-dashboard">até a data atual</span>
+                        <h3>Recebido até o mês corrente (<span id="dfx-dash-mes-referencia">—</span>)</h3>
+                        <p class="amount" id="dfx-dash-valor-recebido-mes">R$ 0,00</p>
+                        <span class="trend positive" id="dfx-dash-hint-recebido">lançamentos quitados no período · dados do servidor</span>
                     </div>
                 </div>
-                
+
                 <div class="card card-pagar">
                     <div class="card-icon">
                         <i class="fas fa-arrow-up"></i>
@@ -145,9 +145,9 @@
                         <strong>Total Vencido:</strong>
                         <div id="total-vencido" style="font-size:18px;margin-top:6px;color:#c0392b">R$ 0,00</div>
                     </div>
-                    <div id="card-total-recebido-mes" style="background:#eafaf1;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.06);min-width:220px">
-                        <strong id="label-total-recebido-mes">Total Recebido no mês:</strong>
-                        <div id="total-recebido-mes" style="font-size:18px;margin-top:6px;color:#27ae60">R$ 0,00</div>
+                    <div id="card-total-recebido-ate-hoje" style="background:#eafaf1;padding:12px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.06);min-width:220px">
+                        <strong>Total Recebido até hoje:</strong>
+                        <div id="total-recebido-ate-hoje" style="font-size:18px;margin-top:6px;color:#27ae60">R$ 0,00</div>
                     </div>
                 </div>
             </div>
@@ -2554,6 +2554,30 @@
                 return s;
             }
 
+            /**
+             * Total recebido no mês civil atual até a data de hoje, a partir dos lançamentos
+             * tipo receber já quitados (persistidos via API/SQLite e espelhados no localStorage).
+             * Não reutiliza variáveis antigas do dashboard; comparação de datas em ISO local (YYYY-MM-DD).
+             */
+            _dashboardTotalRecebidoMesCorrente(receber, db) {
+                const agora = new Date();
+                const ano = agora.getFullYear();
+                const mes = agora.getMonth() + 1;
+                const hojeStr = db.dataLocalISO(agora);
+                const primeiroDiaMesStr = `${ano}-${String(mes).padStart(2, '0')}-01`;
+                let soma = 0;
+                const lista = Array.isArray(receber) ? receber : [];
+                for (let i = 0; i < lista.length; i++) {
+                    const it = lista[i];
+                    if (!it || !db.isItemPagoFinanceiro(it)) continue;
+                    const baseData = it.dataPagamento || it.data_pagamento || it.confirmadoEm || it.confirmado_em || it.data;
+                    const iso = db.normalizarVencimentoISO(baseData);
+                    if (!iso || iso < primeiroDiaMesStr || iso > hojeStr) continue;
+                    soma += Number(db.getValorPagoItem(it)) || 0;
+                }
+                return soma;
+            }
+
             _percentualInadimplenciaValor(receber, db, limiteISO) {
                 let valorAberto = 0;
                 let valorAtrasado = 0;
@@ -2645,15 +2669,31 @@
                 const curM = now.getMonth() + 1;
                 const nomesMeses = ['Janeiro', 'Fevereiro', 'Marco', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
                 const nomeMesAtual = nomesMeses[curM - 1] || String(curM);
-                const elMesRecebido = document.getElementById('mes-recebido-dashboard');
                 const elMesPago = document.getElementById('mes-pago-dashboard');
                 const elMesSaldo = document.getElementById('mes-saldo-dashboard');
-                if (elMesRecebido) elMesRecebido.textContent = nomeMesAtual;
                 if (elMesPago) elMesPago.textContent = nomeMesAtual;
                 if (elMesSaldo) elMesSaldo.textContent = nomeMesAtual;
 
-                const receber = await db.getAll('receber');
-                const pagar = await db.getAll('pagar');
+                // Dashboard deve ler direto do banco (via API), sem depender de localStorage
+                let dados = [];
+                try {
+                    const resp = await fetch('/api/financeiro', { cache: 'no-store' });
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    dados = await resp.json();
+                } catch (e) {
+                    console.warn('Falha ao buscar dados do banco para dashboard:', e);
+                    dados = [];
+                    const hint = document.getElementById('dfx-dash-hint-recebido');
+                    if (hint) hint.textContent = 'não foi possível buscar do banco agora';
+                }
+
+                const isTipoReceber = (t) => {
+                    const s = String(t || '').toLowerCase().trim();
+                    return s === 'receber' || s === 'receita';
+                };
+                const receber = (dados || []).filter(d => isTipoReceber(d.tipo));
+                const pagar = (dados || []).filter(d => String(d.tipo || '').toLowerCase().trim() === 'pagar');
+
                 const mesAtualPrefixo = `${curY}-${String(curM).padStart(2, '0')}`;
                 const inicioMesISO = `${mesAtualPrefixo}-01`;
                 let prevY = curY;
@@ -2670,12 +2710,14 @@
                 };
                 const noMesAteHoje = (iso) => !!iso && iso >= inicioMesISO && iso <= hojeISO;
 
-                const recebidoMes = (receber || []).reduce((acc, r) => {
-                    if (!db.isItemPagoFinanceiro(r)) return acc;
-                    const iso = dataPagamentoISO(r);
-                    if (!noMesAteHoje(iso)) return acc;
-                    return acc + (db.getValorPagoItem(r) || 0);
-                }, 0);
+                const totalRecebidoMesCorrente = this._dashboardTotalRecebidoMesCorrente(receber, db);
+
+                const elDfxMesRef = document.getElementById('dfx-dash-mes-referencia');
+                const elDfxValor = document.getElementById('dfx-dash-valor-recebido-mes');
+                if (elDfxMesRef) elDfxMesRef.textContent = nomeMesAtual;
+                if (elDfxValor && typeof this.formatarMoeda === 'function') {
+                    elDfxValor.textContent = this.formatarMoeda(totalRecebidoMesCorrente);
+                }
 
                 const pagoMes = (pagar || []).reduce((acc, p) => {
                     if (!db.isItemPagoFinanceiro(p)) return acc;
@@ -2684,12 +2726,10 @@
                     return acc + (db.getValorPagoItem(p) || 0);
                 }, 0);
 
-                const elRecebidoMes = document.getElementById('recebido-mes-dashboard');
                 const elPagoMes = document.getElementById('pago-mes-dashboard');
-                if (elRecebidoMes) elRecebidoMes.textContent = this.formatarMoeda(recebidoMes);
                 if (elPagoMes) elPagoMes.textContent = this.formatarMoeda(pagoMes);
 
-                const saldoMes = recebidoMes - pagoMes;
+                const saldoMes = totalRecebidoMesCorrente - pagoMes;
                 const saldoMesPrev = this._saldoMesPendente(receber, pagar, db, prefixMes(prevY, prevM));
 
                 document.getElementById('saldo-mes').textContent = this.formatarMoeda(saldoMes);
@@ -5915,22 +5955,15 @@
                         return null;
                     };
 
-                    // Novo: total recebido no mês filtrado
                     const meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
                     const filtroMesVal = (document.getElementById('filter-mes') && document.getElementById('filter-mes').value) || '';
                     const filtroAnoVal = (document.getElementById('filter-ano') && document.getElementById('filter-ano').value) || '';
-                    let mesResumo, anoResumo;
+                    let mesResumo;
                     if (filtroMesVal) {
                         mesResumo = meses[Number(filtroMesVal)-1] || '';
                     } else {
                         const dataAtual = new Date();
                         mesResumo = meses[dataAtual.getMonth()];
-                    }
-                    if (filtroAnoVal) {
-                        anoResumo = filtroAnoVal;
-                    } else {
-                        const dataAtual = new Date();
-                        anoResumo = dataAtual.getFullYear();
                     }
 
                     // Total a receber do mês/ano filtrado (independente do status do filtro)
@@ -5959,37 +5992,33 @@
                         })
                         .reduce((s, r) => s + (Number(r.valor) || 0), 0);
 
-                    // Soma dos recebidos no mês/ano filtrado
-                    const totalRecebidoMes = receber
+                    // Total recebido até a data corrente (todas as entradas já quitadas, até hoje)
+                    const totalRecebidoAteHoje = receber
                         .filter(r => isPaid(r))
                         .filter(r => {
                             const d = parseDateLocal(r.dataPagamento || r.data_pagamento || r.confirmadoEm || r.confirmado_em || r.vencimento || r.data);
-                            if (!d) return false;
-                            if (filtroMesVal && (d.getMonth()+1) !== Number(filtroMesVal)) return false;
-                            if (filtroAnoVal && d.getFullYear() !== Number(filtroAnoVal)) return false;
-                            return true;
+                            return d && d <= hojeZero;
                         })
                         .reduce((sum, r) => sum + (Number(r.valor) || 0), 0);
 
                     // Atualizar valores na tela
                     const elTotal = document.getElementById('total-receber');
                     const elVenc = document.getElementById('total-vencido');
+                    const elRecebidoAteHoje = document.getElementById('total-recebido-ate-hoje');
                     const cardTotal = document.getElementById('card-total-receber');
                     const cardVenc = document.getElementById('card-total-vencido');
                     const labelTotalReceber = document.querySelector('#card-total-receber strong');
+
                     if (elTotal && typeof ui.formatarMoeda === 'function') elTotal.textContent = ui.formatarMoeda(totalReceberMes);
                     if (labelTotalReceber) labelTotalReceber.textContent = `Total a Receber: ${mesResumo}`;
                     if (elVenc && typeof ui.formatarMoeda === 'function') elVenc.textContent = ui.formatarMoeda(totalVencidoFiltrado);
+                    if (elRecebidoAteHoje && typeof ui.formatarMoeda === 'function') elRecebidoAteHoje.textContent = ui.formatarMoeda(totalRecebidoAteHoje);
+
                     if (cardTotal) cardTotal.style.border = totalReceberFiltrado > 0 ? '2px solid #27ae60' : '1px solid #eee';
                     if (cardVenc) {
                         cardVenc.style.border = totalVencidoFiltrado > 0 ? '2px solid #c0392b' : '1px solid #eee';
                         cardVenc.style.boxShadow = totalVencidoFiltrado > 0 ? '0 4px 12px rgba(192,57,43,0.08)' : '0 1px 3px rgba(0,0,0,0.06)';
                     }
-                    // Atualizar card de total recebido no mês
-                    const elRecebidoMes = document.getElementById('total-recebido-mes');
-                    const labelRecebidoMes = document.getElementById('label-total-recebido-mes');
-                    if (elRecebidoMes && typeof ui.formatarMoeda === 'function') elRecebidoMes.textContent = ui.formatarMoeda(totalRecebidoMes);
-                    if (labelRecebidoMes) labelRecebidoMes.textContent = `Total Recebido no mês: ${mesResumo}`;
                 } catch (err) { console.warn('Erro ao recalcular totais filtrados:', err); }
 
                 showToast('Filtro aplicado', 'info');
